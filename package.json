@@ -1,6 +1,6 @@
 {
   "name": "authnudge-mcp",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "MCP server: phone-grant login into Chrome with remote debugging. Never returns usernames or passwords.",
   "type": "module",
   "bin": {
@@ -19,7 +19,7 @@
   ],
   "scripts": {
     "validate": "node scripts/validate-template.mjs",
-    "check": "node scripts/validate-template.mjs && node plugins/authnudge/login.check.mjs && node plugins/authnudge/mcp.check.mjs"
+    "check": "node scripts/validate-template.mjs && node plugins/authnudge/login.check.mjs && node plugins/authnudge/cdp.check.mjs && node plugins/authnudge/mcp.check.mjs"
   },
   "engines": {
     "node": ">=22"

@@ -1,6 +1,6 @@
 // Self-contained: chrome.scripting.executeScript serializes this function.
 // Return status only — never field values.
-// ponytail: no shadow-DOM / cross-host iframe recipes; add a site list if real logins stay unfilled.
+// Hosts inject this per frame (extension allFrames / CDP frame tree). Cross-host iframes stay isolated.
 export async function fillLoginForm(identifier, secret, expectedOrigin, waitMs = 15000) {
   // page.evaluate-style hosts only pass one argument.
   if (identifier !== null && typeof identifier === "object" && !Array.isArray(identifier)) {
@@ -19,9 +19,14 @@ export async function fillLoginForm(identifier, secret, expectedOrigin, waitMs =
   };
   const sameHost = () => {
     if (!expectedOrigin) return true;
-    const left = hostOf(location.href);
     const right = hostOf(expectedOrigin);
-    return Boolean(left && right && left === right);
+    if (!right) return true;
+    if (hostOf(location.href) === right) return true;
+    try {
+      return hostOf(window.top.location.href) === right;
+    } catch {
+      return false;
+    }
   };
 
   if (!sameHost()) return { ok: false, reason: "wrong_origin" };
@@ -61,10 +66,12 @@ export async function fillLoginForm(identifier, secret, expectedOrigin, waitMs =
     [...document.querySelectorAll("input")].filter((el) => {
       if (!visible(el)) return false;
       const type = (el.type || "text").toLowerCase();
-      if (["password", "hidden", "submit", "button", "checkbox", "radio", "file", "reset", "image"].includes(type)) {
+      if (["password", "hidden", "submit", "button", "checkbox", "radio", "file", "reset", "image", "search"].includes(type)) {
         return false;
       }
-      return ["email", "text", "tel", "search", "url"].includes(type);
+      const text = hint(el);
+      if (text.includes("search") || text.includes("suche") || text.includes("recherch")) return false;
+      return ["email", "text", "tel", "url"].includes(type);
     });
 
   const passwords = () =>
@@ -108,7 +115,9 @@ export async function fillLoginForm(identifier, secret, expectedOrigin, waitMs =
     }
     const next = [...document.querySelectorAll("button, input[type=submit], [role=button]")].find((el) => {
       if (!visible(el) || el.disabled) return false;
-      return /^(continue|next|log\s*in|sign\s*in|submit)$/i.test((el.textContent || el.value || "").trim());
+      return /^(continue|next|log\s*in|sign\s*in|submit|anmelden|weiter|se connecter|connexion|continuer|accedi|avanti)$/i.test(
+        (el.textContent || el.value || "").trim(),
+      );
     });
     if (next) {
       next.click();

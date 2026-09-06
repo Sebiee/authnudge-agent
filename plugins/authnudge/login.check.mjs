@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { encryptForRequester } from "./e2e.js";
@@ -15,6 +15,9 @@ assert.equal(normalizeTo("@You@Example.com"), "you@example.com");
 
 const src = fillLoginForm.toString();
 assert.match(src, /typeof identifier === "object"/);
+assert.match(src, /suche/);
+assert.match(src, /anmelden/);
+assert.match(src, /"search"\]\.includes\(type\)/);
 
 const origin = "https://www.galaxus.ch/login";
 const fakePage = () => ({
@@ -156,6 +159,37 @@ assert.equal(junkKey.status, "error");
 assert.match(junkKey.message, /an_/);
 
 delete process.env.AUTHNUDGE_API_KEY;
+process.env.AUTHNUDGE_TO = "you@example.com";
+let fills = 0;
+globalThis.fetch = async (url, init) => {
+  if (init?.method === "POST") {
+    return Response.json(
+      {
+        requestId: "req-3",
+        claimToken: "claim-3",
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+      { status: 201 },
+    );
+  }
+  assert.match(String(url), /\/api\/v1\/requests\/req-3$/);
+  const keys = JSON.parse(readFileSync(process.env.AUTHNUDGE_KEY_FILE, "utf8"));
+  const envelope = await encryptForRequester(keys.publicKey, { username: "shopper", password: "s3cret", origin }, "req-3");
+  return Response.json({ status: "fulfilled", envelope });
+};
+const lateForm = {
+  url: () => origin,
+  waitForUpdate: async () => {},
+  evaluate: async () => {
+    fills += 1;
+    if (fills < 3) return { ok: false, reason: "no_form" };
+    return { ok: true };
+  },
+};
+const retried = await login(lateForm, { to: "you@example.com", baseUrl: "http://127.0.0.1:9" });
+assert.equal(retried.ok, true);
+assert.equal(fills, 3);
+
 process.env.AUTHNUDGE_TO = "";
 const shown = await publicKeyInfo();
 assert.equal(typeof shown.publicKey, "string");

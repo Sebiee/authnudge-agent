@@ -153,6 +153,12 @@ export async function waitForEnvelope({ baseUrl, requestId, claimToken, expiresA
   });
 }
 
+async function waitRetry(page, deadline) {
+  const leftover = Math.min(2000, Math.max(0, deadline - Date.now()));
+  if (typeof page.waitForUpdate === "function") return page.waitForUpdate(leftover);
+  return sleep(leftover);
+}
+
 async function fillPage(page, origin, identifier, secret) {
   const deadline = Date.now() + 45_000;
   let waitMs = 15_000;
@@ -166,9 +172,8 @@ async function fillPage(page, origin, identifier, secret) {
     }
     if (result?.ok) return { ok: true };
     if (result?.reason === "wrong_origin") return { ok: false, status: "page_changed" };
-    if (result?.reason === "no_form") return { ok: false, status: "no_form" };
     waitMs = 4_000;
-    await sleep(Math.min(2000, Math.max(0, deadline - Date.now())));
+    await waitRetry(page, deadline);
   }
   if (!sameLoginHost(await pageUrl(page), origin)) return { ok: false, status: "page_changed" };
   return { ok: false, status: "no_form" };
@@ -265,7 +270,7 @@ export async function login(page, options = {}) {
 export async function loginCdp(options = {}) {
   let page;
   try {
-    page = await attachCdpPage(options.cdpUrl);
+    page = await attachCdpPage(options.cdpUrl, options.url);
     if (options.url) await page.goto(options.url);
   } catch (err) {
     page?.close();
