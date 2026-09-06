@@ -13,7 +13,7 @@ const mcp = JSON.parse(readFileSync(join(here, "mcp.json"), "utf8"));
 assert.equal(plugin.name, "authnudge");
 assert.equal(plugin.repository, "https://github.com/Sebiee/authnudge-agent");
 assert.equal(plugin.version, pkg.version);
-assert.equal(pkg.bin["authnudge-mcp"], "./mcp.mjs");
+assert.equal(pkg.bin["authnudge-mcp"], "./authnudge-mcp");
 assert.equal(mcp.mcpServers.authnudge.command, "npx");
 assert.deepEqual(mcp.mcpServers.authnudge.args, ["-y", "authnudge-mcp"]);
 assert.equal("cwd" in mcp.mcpServers.authnudge, false);

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { loginCdp } from "./login.mjs";
 
 function readVersion() {
-  for (const name of ["./package.json", "./.cursor-plugin/plugin.json"]) {
+  for (const name of ["./package.json", "./.cursor-plugin/plugin.json", "../../package.json"]) {
     try {
       const version = JSON.parse(readFileSync(new URL(name, import.meta.url), "utf8")).version;
       if (version) return version;
