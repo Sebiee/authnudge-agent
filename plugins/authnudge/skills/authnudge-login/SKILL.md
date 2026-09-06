@@ -1,22 +1,35 @@
 ---
 name: authnudge-login
-description: Logs an agent into a website via Authnudge phone grant. Use when the user wants an agent to sign into a site they own without pasting a password in chat.
+description: Logs an agent into a site via Authnudge phone grant. Use when signing into a site the user owns without a password in chat. Covers asking for a handle, generating a requester key pair, and filling DevTools Chrome.
 ---
 
 # Authnudge login
 
-Call the **authnudge** MCP tool `login`. Do not ask for the password in chat. Do not type a password into any page (not Playwright, not computer-use). Do not print usernames or passwords.
+You are a **requester**. The account holder approves a grant on their phone. Never ask for, type, or print a username or password (not in chat, not Playwright, not computer-use).
 
-`login` fills **Chrome with remote debugging** (`http://127.0.0.1:9222` by default). Playwright and other browser-automation tools use a different Chrome; those tabs stay logged out.
+Their inbox accepts this agent only if:
 
-## Steps
+- they set an **API key** (`an_…`) on the plugin, or
+- they saved **this agent’s public key** at authnudge.com → **Access** → **Public keys**.
 
-1. If you do not already know the user’s Authnudge handle or email, ask for it. Never ask for a password.
-2. Call `login` with `{ "url": "<login URL>", "to": "<handle or email>" }`. Always pass `to`. Always pass `url` unless that DevTools Chrome is already on the login page.
-3. Wait. The account holder’s phone gets a push; they fill Authnudge’s grant form.
-4. On `{ "ok": true }`, continue in that DevTools Chrome. On `expired` / `no_form` / `error`, stop and report that status.
-5. On `{ "status": "pairing", "publicKey": "…" }`, show the **publicKey** so the user can paste it at authnudge.com → Access → Public keys. Then call `login` again with the same `to`. The public key is meant to be copied; it is not a password.
+You cannot see plugin settings. Call **`publicKey`** first. That tool generates a P-256 key pair once, stores the private key on this machine, and returns only the public SPKI (base64) plus `toConfigured` / `apiKeyConfigured`. **Never print, copy, or ask for the private key.** The tool does not return it.
 
-If Chrome is not on port 9222, `login` returns an error — tell the user to start Chrome with `--remote-debugging-port=9222` (or pass `cdpUrl` / `AUTHNUDGE_CDP_URL`).
+`login` fills **Chrome with remote debugging** (`http://127.0.0.1:9222`). Playwright and other automation use a different Chrome and stay logged out.
 
-If the authnudge tool is missing, tell the user to install the Authnudge plugin in Cursor (Customize → Plugins) and enable push on their Authnudge PWA. No env vars are required. An optional `AUTHNUDGE_API_KEY` (`an_…`) skips pairing for advanced users.
+## Setup (before `login`)
+
+1. Call **`publicKey`**. This is how the key pair is created. Show the user the `publicKey` value when pairing; do not paraphrase it.
+2. **Handle.** If `toConfigured` is false and you do not already know their Authnudge handle or email, ask. Prefer a host question tool if one exists. Never ask for a password or API secret in that prompt.
+3. **Pair** (skip if `apiKeyConfigured` is true). Tell them to open authnudge.com → Access → Public keys, enter any Name, paste the `publicKey` string into **Public key** (placeholder: “P-256 SPKI, base64”), and Save. Wait until they confirm it is saved.
+4. Then Login.
+
+## Login
+
+1. Call `login` with `{ "url": "<login URL>", "to": "<handle or email>" }`. Always pass `to` unless `toConfigured` was true. Always pass `url` unless that DevTools Chrome is already on the login page.
+2. Wait. Their phone gets a push; they submit Authnudge’s grant form.
+3. `{ "ok": true }` — continue in that DevTools Chrome. `expired` / `no_form` / `error` — stop and report that status.
+4. If `login` returns `status: "pairing"` with a `publicKey`, they have not saved this key yet. Show that same `publicKey` again; do not generate a new one in chat.
+
+Depending on the user's request nature, chrome might already be started with debug port 9222, or you should start it yourself with `--remote-debugging-port=9222` (or pass `cdpUrl`).
+
+If the authnudge tools are missing, they need the Authnudge Cursor plugin (Customize → Plugins) and push enabled on the Authnudge PWA.

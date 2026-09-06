@@ -11,7 +11,7 @@ This repository is the agent plugin, not the [Authnudge web app](https://authnud
 
 | Plugin | Path | What it adds |
 | --- | --- | --- |
-| **authnudge** | `plugins/authnudge` | MCP `login` tool + skill |
+| **authnudge** | `plugins/authnudge` | MCP `publicKey` + `login`, plus skill |
 
 MCP is launched the same way as the template’s example:
 
@@ -35,7 +35,7 @@ chrome --remote-debugging-port=9222 --user-data-dir="$HOME/.authnudge-chrome"
 
 3. Install this plugin in Cursor (Customize → Plugins).
 
-No env vars are required. Pass `to` (Authnudge email or handle) on `login`. Optionally set `AUTHNUDGE_TO` / `AUTHNUDGE_API_KEY` under Plugins → Configure.
+If there is no plugin API key, the agent calls `publicKey` (P-256 SPKI, base64) and the holder pastes it at Access → Public keys. The private key stays on the agent machine. Pass `to` (handle or email) on `login`, or set `AUTHNUDGE_TO` under Plugins → Configure.
 
 Playwright, computer-use, and other browser-automation windows are a different Chrome. After `{ "ok": true }`, the session is in the DevTools Chrome.
 

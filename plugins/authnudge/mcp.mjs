@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
-import { loginCdp } from "./login.mjs";
+import { loginCdp, publicKeyInfo } from "./login.mjs";
 
 function readVersion() {
   for (const name of ["./package.json", "./.cursor-plugin/plugin.json", "../../package.json"]) {
@@ -16,28 +16,36 @@ function readVersion() {
 
 const version = readVersion();
 
-const TOOL = {
-  name: "login",
-  description:
-    "Ask the Authnudge account holder to grant site credentials on their phone, then fill the login form in Chrome with remote debugging (default http://127.0.0.1:9222). Does not fill Playwright, computer-use, or other browser-automation tabs — those are a different Chrome. Never returns usernames or passwords. Pass `to` (Authnudge email or handle); ask the user if unknown. AUTHNUDGE_API_KEY is optional; if omitted, login returns status pairing with a publicKey to save at authnudge.com → Access → Public keys, then retry. Start Chrome with --remote-debugging-port=9222 (or set AUTHNUDGE_CDP_URL / cdpUrl).",
-  inputSchema: {
-    type: "object",
-    properties: {
-      url: {
-        type: "string",
-        description: "Login page to open in the DevTools Chrome before filling, e.g. https://www.galaxus.ch/login",
-      },
-      to: {
-        type: "string",
-        description: "Authnudge email or handle. Ask the user if unknown. Optional AUTHNUDGE_TO env is a fallback.",
-      },
-      cdpUrl: {
-        type: "string",
-        description: "Chrome DevTools HTTP URL. Defaults to AUTHNUDGE_CDP_URL or http://127.0.0.1:9222.",
+const TOOLS = [
+  {
+    name: "publicKey",
+    description:
+      "Create (once) or return this agent's requester public key as P-256 SPKI base64. The matching private key is stored on this machine and is never returned. The account holder pastes publicKey at authnudge.com → Access → Public keys so signed grant requests are allowed. Also returns booleans toConfigured / apiKeyConfigured (not the secret values). Call this before login when no API key is configured.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "login",
+    description:
+      "Create a phone-grant request and fill the login form in Chrome with remote debugging (default http://127.0.0.1:9222). Does not fill Playwright, computer-use, or other browser-automation tabs. Never returns usernames, passwords, or the requester private key. Pass `to` (Authnudge email or handle) unless AUTHNUDGE_TO is set. Pairing (saving this agent's public key) must already be done via publicKey unless AUTHNUDGE_API_KEY is set. Start Chrome with --remote-debugging-port=9222.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: {
+          type: "string",
+          description: "Login page to open in the DevTools Chrome before filling, e.g. https://www.galaxus.ch/login",
+        },
+        to: {
+          type: "string",
+          description: "Authnudge email or handle. Ask the user if unknown. Optional AUTHNUDGE_TO env is a fallback.",
+        },
+        cdpUrl: {
+          type: "string",
+          description: "Chrome DevTools HTTP URL. Defaults to AUTHNUDGE_CDP_URL or http://127.0.0.1:9222.",
+        },
       },
     },
   },
-};
+];
 
 let framing = null;
 let buf = Buffer.alloc(0);
@@ -74,24 +82,28 @@ async function handle(msg) {
     });
   }
   if (method === "ping") return reply(id, {});
-  if (method === "tools/list") return reply(id, { tools: [TOOL] });
+  if (method === "tools/list") return reply(id, { tools: TOOLS });
   if (method === "resources/list") return reply(id, { resources: [] });
   if (method === "prompts/list") return reply(id, { prompts: [] });
   if (method === "tools/call") {
-    if (params?.name !== "login") return fail(id, -32601, "Unknown tool");
-    const args = params.arguments && typeof params.arguments === "object" ? params.arguments : {};
+    const name = params?.name;
+    const args = params?.arguments && typeof params.arguments === "object" ? params.arguments : {};
     let result;
     try {
-      result = await loginCdp({
-        url: typeof args.url === "string" ? args.url : undefined,
-        to: typeof args.to === "string" ? args.to : undefined,
-        cdpUrl: typeof args.cdpUrl === "string" ? args.cdpUrl : undefined,
-      });
+      if (name === "publicKey") result = await publicKeyInfo();
+      else if (name === "login") {
+        result = await loginCdp({
+          url: typeof args.url === "string" ? args.url : undefined,
+          to: typeof args.to === "string" ? args.to : undefined,
+          cdpUrl: typeof args.cdpUrl === "string" ? args.cdpUrl : undefined,
+        });
+      } else return fail(id, -32601, "Unknown tool");
     } catch {
       result = { ok: false, status: "error" };
     }
     const text = JSON.stringify(result);
-    return reply(id, { content: [{ type: "text", text }], isError: !result.ok });
+    const isError = name === "login" && result && result.ok === false;
+    return reply(id, { content: [{ type: "text", text }], isError });
   }
   return fail(id, -32601, "Method not found");
 }

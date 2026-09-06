@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { encryptForRequester } from "./e2e.js";
 import { fillLoginForm } from "./fill.js";
-import { login } from "./login.mjs";
+import { login, publicKeyInfo } from "./login.mjs";
 import { ignorePlaceholder, normalizeTo } from "./origin.js";
 
 assert.equal(ignorePlaceholder("${AUTHNUDGE_API_KEY}"), "");
@@ -154,5 +154,16 @@ const junkKey = await login(fakePage(), {
 assert.equal(junkKey.ok, false);
 assert.equal(junkKey.status, "error");
 assert.match(junkKey.message, /an_/);
+
+delete process.env.AUTHNUDGE_API_KEY;
+process.env.AUTHNUDGE_TO = "";
+const shown = await publicKeyInfo();
+assert.equal(typeof shown.publicKey, "string");
+assert.ok(shown.publicKey.length > 40);
+assert.equal(typeof shown.fingerprint, "string");
+assert.equal(shown.toConfigured, false);
+assert.equal(shown.apiKeyConfigured, false);
+assert.equal("privateKey" in shown, false);
+assert.equal(JSON.stringify(shown).includes("privateKey"), false);
 
 console.log("agent login check ok");

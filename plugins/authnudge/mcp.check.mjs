@@ -22,6 +22,12 @@ assert.doesNotMatch(JSON.stringify(mcp), /input-type=module/);
 const placeholders = [...JSON.stringify(mcp).matchAll(/\$\{([A-Z][A-Z0-9_]*)\}/g)].map((m) => m[1]);
 assert.deepEqual([...new Set(placeholders)].sort(), ["AUTHNUDGE_API_KEY", "AUTHNUDGE_TO"]);
 
+const skill = readFileSync(join(here, "skills/authnudge-login/SKILL.md"), "utf8");
+assert.match(skill, /Call \*\*`publicKey`\*\*/);
+assert.match(skill, /Never print, copy, or ask for the private key/);
+assert.match(skill, /host question tool/);
+assert.doesNotMatch(plugin.variables.properties.AUTHNUDGE_API_KEY.description, /login returns a public key/);
+
 function encode(msg) {
   return `${JSON.stringify(msg)}\n`;
 }
@@ -68,8 +74,12 @@ async function handshake(command, args, cwd) {
     assert.equal(init.result.serverInfo.name, "authnudge");
     child.stdin.write(encode({ jsonrpc: "2.0", id: 2, method: "tools/list" }));
     const listed = await next();
-    assert.equal(listed.result.tools[0].name, "login");
-    assert.match(listed.result.tools[0].description, /Never returns usernames or passwords/);
+    const names = listed.result.tools.map((t) => t.name).sort();
+    assert.deepEqual(names, ["login", "publicKey"]);
+    const pub = listed.result.tools.find((t) => t.name === "publicKey");
+    assert.match(pub.description, /never returned/i);
+    const loginTool = listed.result.tools.find((t) => t.name === "login");
+    assert.match(loginTool.description, /Never returns usernames/);
   } finally {
     clearTimeout(timeout);
     child.kill();

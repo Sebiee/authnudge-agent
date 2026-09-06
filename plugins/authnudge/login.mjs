@@ -58,6 +58,17 @@ async function loadPersistentKeys() {
   return keys;
 }
 
+/** Public SPKI only. Private key stays in the key file. */
+export async function publicKeyInfo() {
+  const keys = await loadPersistentKeys();
+  return {
+    publicKey: keys.publicKey,
+    fingerprint: await requesterFingerprint(keys.publicKey),
+    toConfigured: Boolean(normalizeTo(process.env.AUTHNUDGE_TO)),
+    apiKeyConfigured: readApiKey({}).startsWith("an_"),
+  };
+}
+
 export async function createCredentialRequest({ baseUrl, to, origin, apiKey, publicKey, signature }) {
   const headers = { "content-type": "application/json" };
   if (apiKey) headers.authorization = `Bearer ${apiKey}`;
