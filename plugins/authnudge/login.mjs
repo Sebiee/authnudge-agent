@@ -159,7 +159,63 @@ async function waitRetry(page, deadline) {
   return sleep(leftover);
 }
 
+async function formOp(page, op, extra = {}) {
+  return page.evaluate(fillLoginForm, { op, expectedOrigin: extra.origin, kind: extra.kind });
+}
+
+async function typeField(page, kind, origin, value) {
+  const focused = await formOp(page, "focus", { origin, kind });
+  if (!focused?.ok) return focused;
+  await page.insertText(value);
+  return { ok: true };
+}
+
+async function fillByTyping(page, origin, identifier, secret) {
+  const deadline = Date.now() + 45_000;
+  let sentIdentifier = false;
+  while (Date.now() < deadline) {
+    if (!sameLoginHost(await pageUrl(page), origin)) return { ok: false, status: "page_changed" };
+    let snap;
+    try {
+      snap = await formOp(page, "inspect", { origin });
+    } catch {
+      snap = { ok: false, reason: "need_password" };
+    }
+    if (snap?.reason === "wrong_origin") return { ok: false, status: "page_changed" };
+
+    if (snap?.password) {
+      if (snap.identifier) {
+        const filled = await typeField(page, "identifier", origin, identifier);
+        if (!filled?.ok) {
+          await waitRetry(page, deadline);
+          continue;
+        }
+      }
+      const filled = await typeField(page, "password", origin, secret);
+      if (!filled?.ok) {
+        await waitRetry(page, deadline);
+        continue;
+      }
+      await formOp(page, "submit", { origin });
+      return { ok: true };
+    }
+
+    if (snap?.identifier && !sentIdentifier) {
+      const filled = await typeField(page, "identifier", origin, identifier);
+      if (filled?.ok) {
+        await formOp(page, "submit", { origin });
+        sentIdentifier = true;
+      }
+    }
+    await waitRetry(page, deadline);
+  }
+  if (!sameLoginHost(await pageUrl(page), origin)) return { ok: false, status: "page_changed" };
+  return { ok: false, status: "no_form" };
+}
+
 async function fillPage(page, origin, identifier, secret) {
+  if (typeof page.insertText === "function") return fillByTyping(page, origin, identifier, secret);
+
   const deadline = Date.now() + 45_000;
   let waitMs = 15_000;
   while (Date.now() < deadline) {

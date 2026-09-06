@@ -18,6 +18,8 @@ assert.match(src, /typeof identifier === "object"/);
 assert.match(src, /suche/);
 assert.match(src, /anmelden/);
 assert.match(src, /"search"\]\.includes\(type\)/);
+assert.match(src, /insertFromPaste/);
+assert.match(src, /op === "inspect"/);
 
 const origin = "https://www.galaxus.ch/login";
 const fakePage = () => ({
@@ -189,6 +191,44 @@ const lateForm = {
 const retried = await login(lateForm, { to: "you@example.com", baseUrl: "http://127.0.0.1:9" });
 assert.equal(retried.ok, true);
 assert.equal(fills, 3);
+
+const typed = [];
+const ops = [];
+globalThis.fetch = async (url, init) => {
+  if (init?.method === "POST") {
+    return Response.json(
+      {
+        requestId: "req-4",
+        claimToken: "claim-4",
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+      { status: 201 },
+    );
+  }
+  assert.match(String(url), /\/api\/v1\/requests\/req-4$/);
+  const keys = JSON.parse(readFileSync(process.env.AUTHNUDGE_KEY_FILE, "utf8"));
+  const envelope = await encryptForRequester(keys.publicKey, { username: "shopper", password: "s3cret", origin }, "req-4");
+  return Response.json({ status: "fulfilled", envelope });
+};
+const typedPage = {
+  url: () => origin,
+  waitForUpdate: async () => {},
+  insertText: async (text) => {
+    typed.push(text.length);
+  },
+  evaluate: async (_fn, arg) => {
+    ops.push(arg.op);
+    assert.equal("secret" in arg, false);
+    assert.equal("identifier" in arg, false);
+    if (arg.op === "inspect") return { ok: true, password: true, identifier: true };
+    return { ok: true };
+  },
+};
+const typedIn = await login(typedPage, { to: "you@example.com", baseUrl: "http://127.0.0.1:9" });
+assert.equal(typedIn.ok, true);
+assert.deepEqual(ops, ["inspect", "focus", "focus", "submit"]);
+assert.deepEqual(typed, [7, 6]);
+assert.equal(JSON.stringify(ops).includes("s3cret"), false);
 
 process.env.AUTHNUDGE_TO = "";
 const shown = await publicKeyInfo();

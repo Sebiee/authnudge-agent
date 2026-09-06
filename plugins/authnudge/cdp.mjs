@@ -193,28 +193,57 @@ export async function attachCdpPage(cdpUrl, wantUrl) {
       const timer = setTimeout(finish, ms);
     });
 
+  let fillTarget = null;
+
   const evaluateInFrame = async (sessionId, frameId, fn, arg) => {
+    if (!frameId) return null;
     let contextId;
-    if (frameId) {
-      try {
-        const world = await call("Page.createIsolatedWorld", { frameId, worldName: "authnudge" }, sessionId);
-        contextId = world?.executionContextId;
-      } catch {
-        return null;
-      }
+    try {
+      const world = await call("Page.createIsolatedWorld", { frameId, worldName: "authnudge" }, sessionId);
+      contextId = world?.executionContextId;
+    } catch {
+      return null;
     }
+    if (contextId == null) return null;
     const result = await call(
-      "Runtime.evaluate",
+      "Runtime.callFunctionOn",
       {
-        expression: `(${fn.toString()})(${JSON.stringify(arg)})`,
+        functionDeclaration: `async function (arg) { return (${fn.toString()})(arg); }`,
+        arguments: [{ value: arg }],
+        executionContextId: contextId,
         awaitPromise: true,
         returnByValue: true,
-        ...(contextId ? { contextId } : {}),
+        userGesture: true,
       },
       sessionId,
     );
     if (result?.exceptionDetails) return null;
     return result?.result?.value ?? null;
+  };
+
+  const eachFrame = async (fn, arg) => {
+    const results = [];
+    const seen = new Set();
+    for (const sessionId of [undefined, ...sessions]) {
+      let frames = [];
+      try {
+        const { frameTree } = await call("Page.getFrameTree", undefined, sessionId);
+        frames = flattenFrameTree(frameTree);
+      } catch {
+        continue;
+      }
+      for (const frame of frames) {
+        if (!frame.id || seen.has(frame.id)) continue;
+        seen.add(frame.id);
+        try {
+          const value = await evaluateInFrame(sessionId, frame.id, fn, arg);
+          if (value != null) results.push({ sessionId, frameId: frame.id, value });
+        } catch {
+          /* navigation tore the context down */
+        }
+      }
+    }
+    return results;
   };
 
   await call("Page.enable");
@@ -250,31 +279,32 @@ export async function attachCdpPage(cdpUrl, wantUrl) {
     async waitForUpdate(ms) {
       await waitForAny(["Page.frameNavigated", "Page.loadEventFired", "Page.frameStoppedLoading"], ms);
     },
+    async insertText(text) {
+      await call("Input.insertText", { text: String(text ?? "") }, fillTarget?.sessionId);
+    },
     async evaluate(fn, arg) {
-      const results = [];
-      const seen = new Set();
-      for (const sessionId of [undefined, ...sessions]) {
-        let frames = [];
-        try {
-          const { frameTree } = await call("Page.getFrameTree", undefined, sessionId);
-          frames = flattenFrameTree(frameTree);
-        } catch {
-          frames = [{ id: null }];
-        }
-        for (const frame of frames) {
-          const key = frame.id ?? `session:${sessionId ?? "main"}`;
-          if (seen.has(key)) continue;
-          try {
-            const value = await evaluateInFrame(sessionId, frame.id, fn, arg);
-            if (value == null) continue;
-            seen.add(key);
-            results.push(value);
-          } catch {
-            /* navigation tore the context down — retry above */
-          }
-        }
+      if (arg?.op === "focus" || arg?.op === "submit") {
+        if (!fillTarget) return { ok: false, reason: "need_password" };
+        return (await evaluateInFrame(fillTarget.sessionId, fillTarget.frameId, fn, arg)) ?? {
+          ok: false,
+          reason: "need_password",
+        };
       }
-      return foldFillResults(results);
+      const hits = await eachFrame(fn, arg);
+      if (arg?.op === "inspect") {
+        fillTarget = null;
+        const hit =
+          hits.find((item) => item.value?.ok && item.value.password) ??
+          hits.find((item) => item.value?.ok && item.value.identifier);
+        if (hit) {
+          fillTarget = { sessionId: hit.sessionId, frameId: hit.frameId };
+          return hit.value;
+        }
+        return hits[0]?.value ?? { ok: false, reason: "no_form" };
+      }
+      const ok = hits.find((item) => item.value?.ok);
+      if (ok) return ok.value;
+      return foldFillResults(hits.map((item) => item.value));
     },
     close() {
       try {

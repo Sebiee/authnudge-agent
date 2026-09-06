@@ -3,8 +3,10 @@
 // Hosts inject this per frame (extension allFrames / CDP frame tree). Cross-host iframes stay isolated.
 export async function fillLoginForm(identifier, secret, expectedOrigin, waitMs = 15000) {
   // page.evaluate-style hosts only pass one argument.
+  let op;
+  let kind;
   if (identifier !== null && typeof identifier === "object" && !Array.isArray(identifier)) {
-    ({ identifier, secret, expectedOrigin, waitMs = 15000 } = identifier);
+    ({ identifier, secret, expectedOrigin, waitMs = 15000, op, kind } = identifier);
   }
   const hostOf = (tabUrl) => {
     let url;
@@ -43,10 +45,16 @@ export async function fillLoginForm(identifier, secret, expectedOrigin, waitMs =
 
   const write = (el, value) => {
     el.focus();
+    const tracker = el._valueTracker;
+    if (tracker && typeof tracker.setValue === "function") tracker.setValue("");
     const desc = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value");
     if (desc?.set) desc.set.call(el, value);
     else el.value = value;
-    el.dispatchEvent(new Event("input", { bubbles: true }));
+    try {
+      el.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertFromPaste", data: value }));
+    } catch {
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    }
     el.dispatchEvent(new Event("change", { bubbles: true }));
   };
 
@@ -126,12 +134,43 @@ export async function fillLoginForm(identifier, secret, expectedOrigin, waitMs =
     return false;
   };
 
-  const submitThenWipe = (form, passwordEl) => {
+  const submitThenWipe = async (form, passwordEl) => {
     const formEl = form || passwordEl.form;
-    const wipe = () => wipePassword(passwordEl);
-    if (formEl) formEl.addEventListener("submit", () => queueMicrotask(wipe), { once: true });
-    if (submitForm(formEl)) queueMicrotask(wipe);
+    submitForm(formEl);
+    // ponytail: give the page a macrotask to read the field; queueMicrotask wiped before Galaxus's submit handler.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    wipePassword(passwordEl);
   };
+
+  const focusField = (which) => {
+    const passwordEl = passwords()[0];
+    const el = which === "password" ? passwordEl : pickIdentifier(passwordEl?.form ?? document, passwordEl ?? null);
+    if (!el) return { ok: false, reason: which === "password" ? "need_password" : "no_form" };
+    el.focus();
+    if (typeof el.select === "function") el.select();
+    return { ok: true };
+  };
+
+  if (op === "inspect") {
+    if (!sameHost()) return { ok: false, reason: "wrong_origin" };
+    const pwd = passwords();
+    if (pwd.length > 1) return { ok: false, reason: "no_form" };
+    return {
+      ok: true,
+      password: pwd.length === 1,
+      identifier: Boolean(pickIdentifier(pwd[0]?.form ?? document, pwd[0] ?? null)),
+    };
+  }
+  if (op === "focus") {
+    if (!sameHost()) return { ok: false, reason: "wrong_origin" };
+    return focusField(kind);
+  }
+  if (op === "submit") {
+    if (!sameHost()) return { ok: false, reason: "wrong_origin" };
+    const passwordEl = passwords()[0];
+    const userEl = pickIdentifier(passwordEl?.form ?? document, passwordEl ?? null);
+    return { ok: submitForm(passwordEl?.form || userEl?.form) };
+  }
 
   const waitForPassword = (ms) =>
     new Promise((resolve) => {
@@ -160,7 +199,7 @@ export async function fillLoginForm(identifier, secret, expectedOrigin, waitMs =
     const userEl = pickIdentifier(passwordEl.form ?? document, passwordEl);
     if (userEl) write(userEl, identifier);
     write(passwordEl, secret);
-    submitThenWipe(passwordEl.form, passwordEl);
+    await submitThenWipe(passwordEl.form, passwordEl);
     return { ok: true };
   }
 
@@ -175,6 +214,6 @@ export async function fillLoginForm(identifier, secret, expectedOrigin, waitMs =
   if (!passwordEl) return { ok: false, reason: "need_password" };
 
   write(passwordEl, secret);
-  submitThenWipe(passwordEl.form, passwordEl);
+  await submitThenWipe(passwordEl.form, passwordEl);
   return { ok: true };
 }
