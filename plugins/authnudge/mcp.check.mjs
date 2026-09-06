@@ -13,8 +13,9 @@ const mcp = JSON.parse(readFileSync(join(here, "mcp.json"), "utf8"));
 assert.equal(plugin.name, "authnudge");
 assert.equal(plugin.repository, "https://github.com/Sebiee/authnudge-agent");
 assert.equal(plugin.version, pkg.version);
-assert.equal(pkg.bin["authnudge-mcp"], "./plugins/authnudge/mcp.mjs");
-assert.equal(mcp.mcpServers.authnudge.command, "./mcp.mjs");
+assert.equal(pkg.bin["authnudge-mcp"], "./mcp.mjs");
+assert.equal(mcp.mcpServers.authnudge.command, "npx");
+assert.deepEqual(mcp.mcpServers.authnudge.args, ["-y", "authnudge-mcp"]);
 assert.equal("cwd" in mcp.mcpServers.authnudge, false);
 assert.doesNotMatch(JSON.stringify(mcp), /\$\{PLUGIN_ROOT\}/);
 assert.doesNotMatch(JSON.stringify(mcp), /input-type=module/);
@@ -52,8 +53,8 @@ async function handshake(command, args, cwd) {
   const next = () => (messages.length ? Promise.resolve(messages.shift()) : new Promise((resolve) => waiters.push(resolve)));
   const timeout = setTimeout(() => {
     child.kill();
-    throw new Error(`mcp handshake timed out\n${Buffer.concat(stderr).toString()}`);
-  }, 5000);
+    throw new Error(`mcp handshake timed out (${command} ${args.join(" ")})\n${Buffer.concat(stderr).toString()}`);
+  }, command === "npx" ? 60000 : 5000);
   try {
     child.stdin.write(
       encode({
@@ -76,5 +77,5 @@ async function handshake(command, args, cwd) {
 }
 
 await handshake(process.execPath, [join(here, "mcp.mjs")], here);
-await handshake("./mcp.mjs", [], here);
+await handshake("npx", ["-y", repoRoot], join(repoRoot, ".."));
 console.log("authnudge mcp check ok");

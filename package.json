@@ -4,9 +4,10 @@
   "description": "MCP server: phone-grant login into Chrome with remote debugging. Never returns usernames or passwords.",
   "type": "module",
   "bin": {
-    "authnudge-mcp": "./plugins/authnudge/mcp.mjs"
+    "authnudge-mcp": "./mcp.mjs"
   },
   "files": [
+    "mcp.mjs",
     "plugins/authnudge/mcp.mjs",
     "plugins/authnudge/login.mjs",
     "plugins/authnudge/cdp.mjs",
@@ -23,6 +24,9 @@
     "node": ">=22"
   },
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "homepage": "https://authnudge.com",
   "repository": {
     "type": "git",

@@ -1,7 +1,8 @@
 {
   "mcpServers": {
     "authnudge": {
-      "command": "./mcp.mjs",
+      "command": "npx",
+      "args": ["-y", "authnudge-mcp"],
       "env": {
         "AUTHNUDGE_TO": "${AUTHNUDGE_TO}",
         "AUTHNUDGE_API_KEY": "${AUTHNUDGE_API_KEY}"

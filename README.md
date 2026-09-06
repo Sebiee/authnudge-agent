@@ -4,7 +4,8 @@ Cursor plugin marketplace for Authnudge phone-grant login. Layout follows the [C
 
 This repository is the agent plugin, not the [Authnudge web app](https://authnudge.com).
 
-**GitHub:** [Sebiee/authnudge-agent](https://github.com/Sebiee/authnudge-agent)
+**GitHub:** [Sebiee/authnudge-agent](https://github.com/Sebiee/authnudge-agent)  
+**npm:** [authnudge-mcp](https://www.npmjs.com/package/authnudge-mcp)
 
 ## Plugin
 
@@ -12,9 +13,16 @@ This repository is the agent plugin, not the [Authnudge web app](https://authnud
 | --- | --- | --- |
 | **authnudge** | `plugins/authnudge` | MCP `login` tool + skill |
 
-The plugin runs the bundled stdio server with `./mcp.mjs` (same plugin-relative `./` form as the template’s hook scripts). Node 22+ must be on `PATH`.
+MCP is launched the same way as the template’s example:
 
-Other MCP clients can run the same server with `npx -y github:Sebiee/authnudge-agent` or `node plugins/authnudge/mcp.mjs`.
+```json
+{
+  "command": "npx",
+  "args": ["-y", "authnudge-mcp"]
+}
+```
+
+Node 22+ must be on `PATH`. Cursor starts plugin MCP from the workspace, so a relative `./mcp.mjs` does not work.
 
 ## Setup
 
@@ -25,7 +33,7 @@ Other MCP clients can run the same server with `npx -y github:Sebiee/authnudge-a
 chrome --remote-debugging-port=9222 --user-data-dir="$HOME/.authnudge-chrome"
 ```
 
-3. Install this plugin in Cursor (Customize → Plugins), or add it from this GitHub repo.
+3. Install this plugin in Cursor (Customize → Plugins).
 
 No env vars are required. Pass `to` (Authnudge email or handle) on `login`. Optionally set `AUTHNUDGE_TO` / `AUTHNUDGE_API_KEY` under Plugins → Configure.
 
@@ -48,4 +56,5 @@ npm run check
 
 ## Publish
 
-Submit `https://github.com/Sebiee/authnudge-agent` at [cursor.com/marketplace/publish](https://cursor.com/marketplace/publish).
+1. `npm publish --access public`
+2. Submit `https://github.com/Sebiee/authnudge-agent` at [cursor.com/marketplace/publish](https://cursor.com/marketplace/publish).

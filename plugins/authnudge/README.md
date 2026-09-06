@@ -14,7 +14,7 @@ Playwright, computer-use, and other browser-automation windows are a different C
 
 ## Included
 
-- `mcp.json`: stdio MCP server (`./mcp.mjs`)
+- `mcp.json`: stdio MCP via `npx -y authnudge-mcp`
 - `skills/authnudge-login/`: when and how to call `login`
 - Optional plugin variables: `AUTHNUDGE_TO`, `AUTHNUDGE_API_KEY` (Plugins → Configure)
 
