@@ -14,8 +14,7 @@ assert.equal(plugin.name, "authnudge");
 assert.equal(plugin.repository, "https://github.com/Sebiee/authnudge-agent");
 assert.equal(plugin.version, pkg.version);
 assert.equal(pkg.bin["authnudge-mcp"], "./plugins/authnudge/mcp.mjs");
-assert.equal(mcp.mcpServers.authnudge.command, "npx");
-assert.deepEqual(mcp.mcpServers.authnudge.args, ["-y", "github:Sebiee/authnudge-agent"]);
+assert.equal(mcp.mcpServers.authnudge.command, "./mcp.mjs");
 assert.equal("cwd" in mcp.mcpServers.authnudge, false);
 assert.doesNotMatch(JSON.stringify(mcp), /\$\{PLUGIN_ROOT\}/);
 assert.doesNotMatch(JSON.stringify(mcp), /input-type=module/);
@@ -26,9 +25,9 @@ function encode(msg) {
   return `${JSON.stringify(msg)}\n`;
 }
 
-async function handshake() {
-  const child = spawn(process.execPath, [join(here, "mcp.mjs")], {
-    cwd: here,
+async function handshake(command, args, cwd) {
+  const child = spawn(command, args, {
+    cwd,
     stdio: ["pipe", "pipe", "pipe"],
   });
   const stderr = [];
@@ -76,5 +75,6 @@ async function handshake() {
   }
 }
 
-await handshake();
+await handshake(process.execPath, [join(here, "mcp.mjs")], here);
+await handshake("./mcp.mjs", [], here);
 console.log("authnudge mcp check ok");

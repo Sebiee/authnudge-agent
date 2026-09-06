@@ -12,7 +12,9 @@ This repository is the agent plugin, not the [Authnudge web app](https://authnud
 | --- | --- | --- |
 | **authnudge** | `plugins/authnudge` | MCP `login` tool + skill |
 
-MCP is launched the same way as the template’s example: `npx -y github:Sebiee/authnudge-agent`. Node 22+ must be on `PATH`.
+The plugin runs the bundled stdio server with `./mcp.mjs` (same plugin-relative `./` form as the template’s hook scripts). Node 22+ must be on `PATH`.
+
+Other MCP clients can run the same server with `npx -y github:Sebiee/authnudge-agent` or `node plugins/authnudge/mcp.mjs`.
 
 ## Setup
 
