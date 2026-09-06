@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "authnudge": {
+      "command": "npx",
+      "args": ["-y", "github:Sebiee/authnudge-agent"],
+      "env": {
+        "AUTHNUDGE_TO": "${AUTHNUDGE_TO}",
+        "AUTHNUDGE_API_KEY": "${AUTHNUDGE_API_KEY}"
+      }
+    }
+  }
+}

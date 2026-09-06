@@ -1,0 +1,18 @@
+{
+  "name": "authnudge",
+  "owner": {
+    "name": "Authnudge",
+    "email": "sebastian.pamparau@unibe.ch"
+  },
+  "metadata": {
+    "description": "Phone-grant login for agents. Usernames and passwords never appear in chat.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "authnudge",
+      "source": "./plugins/authnudge",
+      "description": "Log an agent into a website by approving on your phone."
+    }
+  ]
+}

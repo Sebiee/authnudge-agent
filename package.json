@@ -1,0 +1,32 @@
+{
+  "name": "authnudge-mcp",
+  "version": "0.1.0",
+  "description": "MCP server: phone-grant login into Chrome with remote debugging. Never returns usernames or passwords.",
+  "type": "module",
+  "bin": {
+    "authnudge-mcp": "./plugins/authnudge/mcp.mjs"
+  },
+  "files": [
+    "plugins/authnudge/mcp.mjs",
+    "plugins/authnudge/login.mjs",
+    "plugins/authnudge/cdp.mjs",
+    "plugins/authnudge/e2e.js",
+    "plugins/authnudge/fill.js",
+    "plugins/authnudge/origin.js",
+    "LICENSE"
+  ],
+  "scripts": {
+    "validate": "node scripts/validate-template.mjs",
+    "check": "node scripts/validate-template.mjs && node plugins/authnudge/login.check.mjs && node plugins/authnudge/mcp.check.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "homepage": "https://authnudge.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Sebiee/authnudge-agent.git"
+  },
+  "keywords": ["mcp", "auth", "login", "credentials"]
+}

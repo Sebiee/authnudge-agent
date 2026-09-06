@@ -1,0 +1,30 @@
+{
+  "name": "authnudge",
+  "displayName": "Authnudge",
+  "version": "0.1.0",
+  "description": "Log an agent into a website by approving on your phone. Fills Chrome with remote debugging. Usernames and passwords never appear in chat.",
+  "author": {
+    "name": "Authnudge",
+    "email": "sebastian.pamparau@unibe.ch"
+  },
+  "homepage": "https://authnudge.com",
+  "repository": "https://github.com/Sebiee/authnudge-agent",
+  "license": "MIT",
+  "keywords": ["auth", "login", "password", "credentials", "mcp"],
+  "logo": "assets/logo.svg",
+  "variables": {
+    "type": "object",
+    "properties": {
+      "AUTHNUDGE_TO": {
+        "type": "string",
+        "title": "Authnudge email or handle",
+        "description": "Optional. Default recipient if login is called without `to`. Prefer passing `to` on the tool."
+      },
+      "AUTHNUDGE_API_KEY": {
+        "type": "string",
+        "title": "API key",
+        "description": "Optional. Dashboard API key (an_…). If omitted, login returns a public key to save under Access → Public keys."
+      }
+    }
+  }
+}

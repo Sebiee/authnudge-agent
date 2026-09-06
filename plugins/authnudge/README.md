@@ -1,0 +1,28 @@
+# Authnudge
+
+Phone-grant login for agents. The `login` tool never returns usernames or passwords.
+
+## What `login` fills
+
+Chrome started with remote debugging, default `http://127.0.0.1:9222`:
+
+```bash
+chrome --remote-debugging-port=9222 --user-data-dir="$HOME/.authnudge-chrome"
+```
+
+Playwright, computer-use, and other browser-automation windows are a different Chrome. After `{ "ok": true }`, the session is in the DevTools Chrome.
+
+## Included
+
+- `mcp.json`: stdio MCP via `npx -y github:Sebiee/authnudge-agent`
+- `skills/authnudge-login/`: when and how to call `login`
+- Optional plugin variables: `AUTHNUDGE_TO`, `AUTHNUDGE_API_KEY` (Plugins → Configure)
+
+## Checks
+
+From this plugin directory:
+
+```bash
+node login.check.mjs
+node mcp.check.mjs
+```
