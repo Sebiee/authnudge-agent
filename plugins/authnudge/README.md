@@ -27,6 +27,8 @@ Playwright, computer-use, and other browser-automation windows are a different C
 2. `login` (remote, OAuth) with `origin` + `requesterPublicKey` → `requestId`, `claimToken`, `expiresAt`.
 3. `fill` (local) with the same `url` and those three values → waits for the phone grant, decrypts with the local private key, fills Chrome.
 
+`fill` and `login` return within ~25 s (MCP hosts cut `tools/call` at about 60 s). While the holder has not approved they return `status: "waiting"`; the agent calls the same tool again with the same arguments and reattaches to the running job. No second request, no second push. A URL without a login form returns `no_form` before the grant is consumed.
+
 ## Checks
 
 From this plugin directory:

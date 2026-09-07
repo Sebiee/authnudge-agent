@@ -38,6 +38,9 @@ assert.match(skill, /Never print, copy, or ask for the private key/);
 assert.match(skill, /host question tool/);
 assert.match(skill, /If \*\*both\*\* are true: call local `login`/);
 assert.match(rule, /`login` with `origin` \+ `requesterPublicKey`, then local `fill`/);
+assert.match(skill, /call `fill` again with the exact same arguments/);
+assert.match(skill, /One `login` call = one push/);
+assert.match(rule, /Never call the remote `login` twice/);
 assert.match(plugin.variables.properties.AUTHNUDGE_TO.description, /fallback/i);
 assert.match(plugin.variables.properties.AUTHNUDGE_API_KEY.description, /fallback/i);
 

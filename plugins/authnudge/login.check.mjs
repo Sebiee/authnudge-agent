@@ -4,11 +4,32 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decryptEnvelope, encryptForRequester, generateRequesterKeys } from "./e2e.js";
 import { loginFormOp } from "./fill.js";
-import { fill, login, publicKeyInfo, timing } from "./login.mjs";
+import { fill, login, pollJob, publicKeyInfo, timing } from "./login.mjs";
 import { ignorePlaceholder, normalizeTo } from "./origin.js";
 
 // Fake pages react instantly; the budgets only need to be long enough for a few loop turns.
-Object.assign(timing, { form: 2_000, settle: 150, otpQuiet: 200, otpWatch: 500, retypeAfter: 300 });
+Object.assign(timing, { form: 2_000, settle: 150, otpQuiet: 200, otpWatch: 500, retypeAfter: 300, toolCall: 100 });
+
+// One MCP call must return inside the host's tools/call cap. Slow work runs once; repeat calls reattach, never restart.
+{
+  let starts = 0;
+  let finish;
+  const slow = () => {
+    starts += 1;
+    return new Promise((resolve) => (finish = resolve));
+  };
+  const first = await pollJob("k", slow, { message: "again" });
+  assert.deepEqual(first, { ok: false, status: "waiting", message: "again" });
+  const second = await pollJob("k", slow, { message: "again" });
+  assert.equal(second.status, "waiting");
+  assert.equal(starts, 1);
+  finish({ ok: true });
+  assert.deepEqual(await pollJob("k", slow, {}), { ok: true });
+  assert.deepEqual(await pollJob("k", async () => ({ ok: false, status: "expired" }), {}), { ok: false, status: "expired" }); // key freed after a result
+  assert.equal(starts, 1);
+  const thrown = await pollJob("boom", async () => { throw new Error("cdp down"); }, {});
+  assert.deepEqual(thrown, { ok: false, status: "error", message: "cdp down" });
+}
 
 assert.equal(ignorePlaceholder("${AUTHNUDGE_API_KEY}"), "");
 assert.equal(ignorePlaceholder("  ${AUTHNUDGE_TO}  "), "");
@@ -108,7 +129,7 @@ function fakePage({ steps = ["identifier", "password", "done"], submitWorks = { 
 
 /** Relay mock: password envelope, then (if the page asks) an otp envelope, then fulfilled. */
 function mockRelay(requestId, { status = 201, checkPost, otpCode = "123456" } = {}) {
-  const seen = { continue: 0, posts: 0 };
+  const seen = { continue: 0, posts: 0, done: 0 };
   let phase = "password";
   let publicKey = "";
   globalThis.fetch = async (url, init) => {
@@ -127,6 +148,12 @@ function mockRelay(requestId, { status = 201, checkPost, otpCode = "123456" } = 
       seen.continue += 1;
       phase = "otp";
       return Response.json({ ok: true, status: "otp_needed" });
+    }
+    if (init?.method === "POST" && path.endsWith("/done")) {
+      assert.equal(init.headers.authorization, `Bearer claim-${requestId}`);
+      seen.done += 1;
+      phase = "done";
+      return Response.json({ ok: true, status: "fulfilled" });
     }
     assert.match(path, new RegExp(`/api/v1/requests/${requestId}$`));
     assert.equal(init.headers.authorization, `Bearer claim-${requestId}`);
@@ -158,6 +185,7 @@ const opts = { to: "you@example.com", baseUrl: "http://127.0.0.1:9" };
   const result = await fill(page, { ...grant, baseUrl: opts.baseUrl });
   assert.deepEqual(result, { ok: true });
   assert.equal(seen.continue, 1);
+  assert.equal(seen.done, 1); // phone flips to "Done" right away instead of at the hold alarm
   assert.deepEqual(page.log.typed, ["identifier:7", "password:6", "otp:6"]);
   assert.equal(JSON.stringify(result).includes("s3cret"), false);
 }
@@ -167,6 +195,20 @@ globalThis.fetch = async () => {
 const noClaim = await fill(fakePage(), { requestId: "x", baseUrl: opts.baseUrl });
 assert.equal(noClaim.status, "error");
 assert.match(noClaim.message, /claimToken/);
+
+// Wrong URL (a 404, a home page): say so before the grant is taken or a push is sent, so nothing is wasted.
+globalThis.fetch = async () => {
+  throw new Error("no relay call without a login form on screen");
+};
+{
+  const formless = fakePage({ steps: ["done"] });
+  formless.url = () => origin; // stays on the site, just no form
+  const viaFill = await fill(formless, { requestId: "x", claimToken: "y", baseUrl: opts.baseUrl, url: origin });
+  assert.equal(viaFill.status, "no_form");
+  assert.match(viaFill.message, /id\., login\., or account\./);
+  const viaLogin = await login(formless, opts);
+  assert.equal(viaLogin.status, "no_form");
+}
 
 // Pairing: unsigned key is rejected with 401 -> hand back the public key, never the private one.
 mockRelay("req-0", {
@@ -223,11 +265,12 @@ assert.equal(JSON.stringify(pairing).includes("privateKey"), false);
 // Wrong password: the site stays on the password step. Two attempts max, honest failure.
 {
   const page = fakePage({ steps: ["password", "done"], wrongPassword: true });
-  mockRelay("req-5");
+  const seen = mockRelay("req-5");
   const result = await login(page, opts);
   assert.equal(result.ok, false);
   assert.equal(result.status, "error");
   assert.deepEqual(page.log.submits, ["click", "rejected", "enter", "rejected"]);
+  assert.equal(seen.done, 0); // a failed fill must leave the request open for a code/retry decision
 }
 
 // OTP after the password: ask the phone via /continue, type the code, submit, done.

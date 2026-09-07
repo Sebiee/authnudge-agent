@@ -88,6 +88,10 @@ function mockRelay(origin, password) {
       phase = "otp";
       return Response.json({ ok: true });
     }
+    if (init?.method === "POST" && path.endsWith("/done")) {
+      phase = "done";
+      return Response.json({ ok: true });
+    }
     if (phase === "password") {
       phase = "holding";
       const envelope = await encryptForRequester(publicKey, { username: "shopper@example.com", password, origin }, "r1");

@@ -284,7 +284,9 @@ export async function attachCdpPage(cdpUrl, wantUrl) {
     async goto(url) {
       if (samePage(await this.url(), url)) return;
       const loaded = waitForAny(["Page.loadEventFired", "Page.frameStoppedLoading"], 15_000);
-      await call("Page.navigate", { url });
+      const nav = await call("Page.navigate", { url });
+      // Fail here, before any envelope is taken, so the grant stays on the relay for a Chrome that can load the site.
+      if (nav?.errorText) throw new Error(`Chrome could not load ${url} (${nav.errorText}).`);
       await loaded;
     },
     /** Sleep up to `ms`, waking early on navigation. Resolves true when something happened. */

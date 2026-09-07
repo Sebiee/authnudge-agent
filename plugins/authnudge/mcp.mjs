@@ -35,7 +35,7 @@ const TOOLS = [
   {
     name: "fill",
     description:
-      "Preferred. After the Authnudge (OAuth) server's `login` tool opened a request with this agent's publicKey, wait for the phone grant and fill the login form in Chrome with remote debugging (default http://127.0.0.1:9222). Pass requestId, claimToken, and expiresAt from that result, plus the same login url. Stays if the site asks for a one-time code. Does not fill Playwright, computer-use, or other browser-automation tabs. Never returns usernames, passwords, codes, or the requester private key.",
+      "Preferred. After the Authnudge (OAuth) server's `login` tool opened a request with this agent's publicKey, wait for the phone grant and fill the login form in Chrome with remote debugging (default http://127.0.0.1:9222). Pass requestId, claimToken, and expiresAt from that result, plus the same login url. Returns within ~25s: `{ ok: true }`, a final status, or `status: \"waiting\"` — then call fill again with the same arguments (the request stays open until expiresAt). Never call the remote `login` again for the same site while a request is open; that sends the user another push. Stays if the site asks for a one-time code. Does not fill Playwright, computer-use, or other browser-automation tabs. Never returns usernames, passwords, codes, or the requester private key.",
     inputSchema: {
       type: "object",
       properties: {
@@ -51,7 +51,7 @@ const TOOLS = [
   {
     name: "login",
     description:
-      "Fallback when the Authnudge (OAuth) server is not connected. Creates the phone-grant request here and fills the login form in Chrome with remote debugging (default http://127.0.0.1:9222). Needs `to` (Authnudge email or handle) unless AUTHNUDGE_TO is set, and either AUTHNUDGE_API_KEY or this agent's publicKey saved at authnudge.com → Access → Public keys. Same filling and secrecy rules as `fill`.",
+      "Fallback when the Authnudge (OAuth) server is not connected. Creates the phone-grant request here and fills the login form in Chrome with remote debugging (default http://127.0.0.1:9222). Needs `to` (Authnudge email or handle) unless AUTHNUDGE_TO is set, and either AUTHNUDGE_API_KEY or this agent's publicKey saved at authnudge.com → Access → Public keys. Returns within ~25s; on `status: \"waiting\"` call login again with the same arguments (it reattaches, no second push). Same filling and secrecy rules as `fill`.",
     inputSchema: {
       type: "object",
       properties: {
@@ -127,7 +127,7 @@ async function handle(msg) {
       result = { ok: false, status: "error" };
     }
     const text = JSON.stringify(result);
-    const isError = name !== "publicKey" && result && result.ok === false;
+    const isError = name !== "publicKey" && result && result.ok === false && result.status !== "waiting";
     return reply(id, { content: [{ type: "text", text }], isError });
   }
   return fail(id, -32601, "Method not found");

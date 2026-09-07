@@ -14,6 +14,7 @@ export const timing = {
   otpQuiet: 8_000, // after the password step: no code prompt within this much page quiet = done
   otpWatch: 20_000, // hard cap on that watch
   retypeAfter: 8_000, // identifier step still showing: type + submit again after this long
+  toolCall: 25_000, // one MCP tool call returns within this; hosts cut tools/call at ~60s and do not honor progress
 };
 
 function sleep(ms) {
@@ -92,6 +93,15 @@ export async function askOtp({ baseUrl, requestId, claimToken }) {
   }
 }
 
+/** The form is filled and no code step is coming: resolve the request now so the phone shows "Done" instead of waiting out the hold. */
+async function markDone({ baseUrl, requestId, claimToken }) {
+  try {
+    await fetch(`${baseUrl}/api/v1/requests/${requestId}/done`, { method: "POST", headers: { authorization: `Bearer ${claimToken}` } });
+  } catch {
+    /* the relay's own alarm resolves it a little later */
+  }
+}
+
 /** Poll until the relay hands over a new envelope, is fulfilled, or expires. GET takes the envelope, so each shows up once. */
 export async function waitForEnvelope({ baseUrl, requestId, claimToken, expiresAt, signal, lastCiphertext = "" }) {
   while (Date.now() < expiresAt) {
@@ -166,6 +176,22 @@ async function submitStep(page, origin, kind, done) {
     }
   }
   return done(await state(page, origin));
+}
+
+/** A login form must be on screen before a grant is consumed (or a push sent): a wrong URL must not eat either. */
+async function awaitLoginForm(page, origin) {
+  const deadline = Date.now() + timing.form;
+  while (Date.now() < deadline) {
+    const s = await state(page, origin);
+    if (s.gone) return { ok: false, status: "page_changed" };
+    if (s.identifier || s.password) return { ok: true };
+    await page.waitForUpdate(700);
+  }
+  return {
+    ok: false,
+    status: "no_form",
+    message: `No login form at ${origin}. Find the page that shows the email/password form (often on an id., login., or account. host) and open a new request for that exact URL.`,
+  };
 }
 
 const passwordStepOver = (s) => s.gone || !s.password;
@@ -263,7 +289,9 @@ async function fillFromRelay(page, origin, keys, relay) {
 
   const first = await useDelivery(page, origin, keys, relay.requestId, waited.envelope, waited.envelopeKind);
   if (!first.ok) return first;
-  return afterPassword(page, origin, keys, relay, waited.envelope.ciphertext);
+  const result = await afterPassword(page, origin, keys, relay, waited.envelope.ciphertext);
+  if (result.ok) await markDone(relay);
+  return result;
 }
 
 /**
@@ -271,27 +299,33 @@ async function fillFromRelay(page, origin, keys, relay) {
  * machine's `publicKey`). No handle, API key, or pairing needed. Never returns usernames or passwords.
  */
 export async function fill(page, options = {}) {
-  const requestId = String(options.requestId ?? "").trim();
-  const claimToken = String(options.claimToken ?? "").trim();
-  if (!requestId || !claimToken) {
-    return { ok: false, status: "error", message: "Pass requestId and claimToken from the Authnudge `login` tool result." };
-  }
+  const claim = claimOf(options);
+  if (!claim) return MISSING_CLAIM;
   let baseUrl;
   try {
     baseUrl = resolveBaseUrl(options);
   } catch {
     return { ok: false, status: "error", message: "AUTHNUDGE_URL must be http or https." };
   }
-  const origin = normalizeOrigin(options.origin ?? (await page.url()));
+  const origin = normalizeOrigin(options.origin ?? options.url ?? (await page.url()));
   if (!origin) return { ok: false, status: "error", message: "The page URL is not a login origin." };
+  const form = await awaitLoginForm(page, origin);
+  if (!form.ok) return form;
 
   return fillFromRelay(page, origin, await loadPersistentKeys(), {
     baseUrl,
-    requestId,
-    claimToken,
+    ...claim,
     expiresAt: Date.parse(options.expiresAt) || Date.now() + 5 * 60 * 1000,
     signal: options.signal,
   });
+}
+
+const MISSING_CLAIM = { ok: false, status: "error", message: "Pass requestId and claimToken from the Authnudge `login` tool result." };
+
+function claimOf(options) {
+  const requestId = String(options.requestId ?? "").trim();
+  const claimToken = String(options.claimToken ?? "").trim();
+  return requestId && claimToken ? { requestId, claimToken } : null;
 }
 
 /** Fallback without OAuth: open the request here with a handle plus API key or paired key, then fill `page`. */
@@ -308,9 +342,12 @@ export async function login(page, options = {}) {
   } catch {
     return { ok: false, status: "error", message: "AUTHNUDGE_URL must be http or https." };
   }
-  const origin = normalizeOrigin(options.origin ?? (await page.url()));
+  // The URL the agent asked for is the login origin; page.url() can still be mid-redirect right after goto.
+  const origin = normalizeOrigin(options.origin ?? options.url ?? (await page.url()));
   if (!to) return { ok: false, status: "error", message: "Pass to as your Authnudge email or handle (ask the user if unknown)." };
   if (!origin) return { ok: false, status: "error", message: "The page URL is not a login origin." };
+  const form = await awaitLoginForm(page, origin);
+  if (!form.ok) return form;
 
   const keys = namedKey ? await generateRequesterKeys() : await loadPersistentKeys();
   let created;
@@ -337,7 +374,7 @@ export async function login(page, options = {}) {
   }
   if (created.status === 401) return { ok: false, status: "error", message: "API key was rejected. It must belong to the account in `to`." };
   if (created.status === 429) return { ok: false, status: "error", message: "Inbox is full. Try again shortly." };
-  if (created.status !== 201) return { ok: false, status: "error", message: "Could not create a credential request." };
+  if (created.status !== 201 && created.status !== 200) return { ok: false, status: "error", message: "Could not create a credential request." }; // 200 = reattached to a still-open request
 
   return fillFromRelay(page, origin, keys, {
     baseUrl,
@@ -365,5 +402,36 @@ async function onCdpPage(options, step) {
   }
 }
 
-export const fillCdp = (options = {}) => onCdpPage(options, fill);
-export const loginCdp = (options = {}) => onCdpPage(options, login);
+/**
+ * Long work runs once, in the background, keyed so a repeat call reattaches instead of opening a
+ * second phone-grant request. Each call returns within `timing.toolCall`: the final result, or
+ * `status: "waiting"` telling the agent to call again with the same arguments.
+ * ponytail: in-memory map; jobs die with this process, and the agent then gets "expired" from the relay on retry.
+ */
+const jobs = new Map();
+
+export async function pollJob(key, start, waiting) {
+  let job = jobs.get(key);
+  if (!job) {
+    job = { promise: start().then((result) => (job.result = result), (err) => (job.result = { ok: false, status: "error", message: String(err?.message ?? err) })) };
+    jobs.set(key, job);
+  }
+  await Promise.race([job.promise, sleep(timing.toolCall)]);
+  if (!job.result) return { ok: false, status: "waiting", ...waiting };
+  jobs.delete(key);
+  return job.result;
+}
+
+const RETRY_FILL = "Not done yet: the account holder has not approved on their phone. Call fill again with the same url, requestId, and claimToken. Do not call login again; that would send a second push.";
+const RETRY_LOGIN = "Not done yet: the account holder has not approved on their phone. Call login again with the same url (and to). Only one request is open per site.";
+
+export async function fillCdp(options = {}) {
+  const claim = claimOf(options);
+  if (!claim) return MISSING_CLAIM;
+  return pollJob(`fill:${claim.requestId}`, () => onCdpPage(options, fill), { message: RETRY_FILL, expiresAt: options.expiresAt });
+}
+
+export function loginCdp(options = {}) {
+  const site = normalizeOrigin(options.url ?? "") || options.cdpUrl || "cdp";
+  return pollJob(`login:${site}`, () => onCdpPage(options, login), { message: RETRY_LOGIN });
+}
