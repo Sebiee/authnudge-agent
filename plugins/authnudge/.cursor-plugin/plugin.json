@@ -1,11 +1,11 @@
 {
   "name": "authnudge",
   "displayName": "Authnudge",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Log an agent into a website by approving on your phone. Fills Chrome with remote debugging. Usernames and passwords never appear in chat.",
   "author": {
     "name": "Authnudge",
-    "email": "sebastian.pamparau@unibe.ch"
+    "email": "sebastian@authnudge.com"
   },
   "homepage": "https://authnudge.com",
   "repository": "https://github.com/Sebiee/authnudge-agent",
