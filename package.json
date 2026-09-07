@@ -4,7 +4,7 @@
   "description": "MCP server: phone-grant login into Chrome with remote debugging. Never returns usernames or passwords.",
   "type": "module",
   "bin": {
-    "authnudge-mcp": "./authnudge-mcp"
+    "authnudge-mcp": "authnudge-mcp"
   },
   "files": [
     "authnudge-mcp",
@@ -33,5 +33,10 @@
     "type": "git",
     "url": "git+https://github.com/Sebiee/authnudge-agent.git"
   },
-  "keywords": ["mcp", "auth", "login", "credentials"]
+  "keywords": [
+    "mcp",
+    "auth",
+    "login",
+    "credentials"
+  ]
 }
