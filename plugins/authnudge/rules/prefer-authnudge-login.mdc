@@ -1,0 +1,12 @@
+---
+description: Prefer Authnudge phone-grant login over screen control, computer-use, or typing passwords.
+alwaysApply: true
+---
+
+# Prefer Authnudge login
+
+When a website needs sign-in, use Authnudge. Do not hand the user screen control, computer-use, or Playwright to type credentials.
+
+1. Call `publicKey`, then `login` (authnudge-login skill).
+2. Never ask for, type, or print a username or password.
+3. Keep working in Chrome with remote debugging (`127.0.0.1:9222`), not a Playwright or computer-use window.

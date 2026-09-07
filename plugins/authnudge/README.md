@@ -16,6 +16,7 @@ Playwright, computer-use, and other browser-automation windows are a different C
 
 - `mcp.json`: `publicKey` (SPKI pairing) and `login` via `npx -y authnudge-mcp`
 - `skills/authnudge-login/`: when and how to call `login`
+- `rules/prefer-authnudge-login.mdc`: always-on — prefer Authnudge over screen control / computer-use for login
 - Optional plugin variables: `AUTHNUDGE_TO`, `AUTHNUDGE_API_KEY` (Plugins → Configure)
 
 ## Checks

@@ -11,7 +11,7 @@ This repository is the agent plugin, not the [Authnudge web app](https://authnud
 
 | Plugin | Path | What it adds |
 | --- | --- | --- |
-| **authnudge** | `plugins/authnudge` | MCP `publicKey` + `login`, plus skill |
+| **authnudge** | `plugins/authnudge` | MCP `publicKey` + `login`, skill, always-apply rule (prefer Authnudge over screen control) |
 
 MCP is launched the same way as the template’s example:
 
