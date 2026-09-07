@@ -20,7 +20,7 @@ const TOOLS = [
   {
     name: "publicKey",
     description:
-      "Create (once) or return this agent's requester public key as P-256 SPKI base64. The matching private key is stored on this machine and is never returned. The account holder pastes publicKey at authnudge.com → Access → Public keys so signed grant requests are allowed. Also returns booleans toConfigured / apiKeyConfigured (not the secret values). Call this before login when no API key is configured.",
+      "Call before login. Returns booleans toConfigured / apiKeyConfigured (not the secret values). If apiKeyConfigured is true, no key pair is created and publicKey is omitted — go straight to login. Otherwise creates (once) or returns this agent's requester public key as P-256 SPKI base64. The matching private key is stored on this machine and is never returned. The account holder pastes publicKey at authnudge.com → Access → Public keys so signed grant requests are allowed.",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -36,7 +36,7 @@ const TOOLS = [
         },
         to: {
           type: "string",
-          description: "Authnudge email or handle. Ask the user if unknown. Optional AUTHNUDGE_TO env is a fallback.",
+          description: "Authnudge email or handle. Omit when toConfigured / AUTHNUDGE_TO is set; do not ask for a handle then. Ask only if unknown and toConfigured is false.",
         },
         cdpUrl: {
           type: "string",

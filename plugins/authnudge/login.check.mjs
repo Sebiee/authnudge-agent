@@ -255,4 +255,11 @@ assert.equal(shown.toConfigured, false);
 assert.equal(shown.apiKeyConfigured, false);
 assert.equal(JSON.stringify(shown).includes("privateKey"), false);
 
+process.env.AUTHNUDGE_TO = "holder@example.com";
+process.env.AUTHNUDGE_API_KEY = "an_testkey_xxxxxxxx";
+const configured = await publicKeyInfo();
+assert.equal(configured.toConfigured, true);
+assert.equal(configured.apiKeyConfigured, true);
+assert.equal("publicKey" in configured, false);
+
 console.log("agent login check ok");

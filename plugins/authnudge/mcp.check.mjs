@@ -13,7 +13,7 @@ const mcp = JSON.parse(readFileSync(join(here, "mcp.json"), "utf8"));
 assert.equal(plugin.name, "authnudge");
 assert.equal(plugin.repository, "https://github.com/Sebiee/authnudge-agent");
 assert.equal(plugin.version, pkg.version);
-assert.equal(pkg.bin["authnudge-mcp"], "./authnudge-mcp");
+assert.equal(pkg.bin["authnudge-mcp"], "authnudge-mcp");
 assert.equal(mcp.mcpServers.authnudge.command, "npx");
 assert.deepEqual(mcp.mcpServers.authnudge.args, ["-y", "authnudge-mcp"]);
 assert.equal("cwd" in mcp.mcpServers.authnudge, false);
@@ -26,6 +26,7 @@ const skill = readFileSync(join(here, "skills/authnudge-login/SKILL.md"), "utf8"
 assert.match(skill, /Call \*\*`publicKey`\*\*/);
 assert.match(skill, /Never print, copy, or ask for the private key/);
 assert.match(skill, /host question tool/);
+assert.match(skill, /both\*\* flags are true, skip pairing and do not ask for a handle/);
 assert.doesNotMatch(plugin.variables.properties.AUTHNUDGE_API_KEY.description, /login returns a public key/);
 
 function encode(msg) {

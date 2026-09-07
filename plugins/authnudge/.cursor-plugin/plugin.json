@@ -18,12 +18,12 @@
       "AUTHNUDGE_TO": {
         "type": "string",
         "title": "Authnudge email or handle",
-        "description": "Optional. Default recipient if login is called without `to`. Prefer passing `to` on the tool."
+        "description": "Optional. If set, login uses this handle and the agent must not ask for one."
       },
       "AUTHNUDGE_API_KEY": {
         "type": "string",
         "title": "API key",
-        "description": "Optional. Dashboard API key (an_…). If omitted, the agent generates a key pair and you paste the public SPKI under Access → Public keys."
+        "description": "Optional. Dashboard API key (an_…). If set, the agent must not generate a key pair or ask you to paste a public key. If omitted, the agent generates a key pair and you paste the public SPKI under Access → Public keys."
       }
     }
   }

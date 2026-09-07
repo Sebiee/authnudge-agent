@@ -54,14 +54,17 @@ async function loadPersistentKeys() {
   return keys;
 }
 
-/** Public SPKI only. Private key stays in the key file. */
+/** Public SPKI only. Private key stays in the key file. No key pair when an API key is already set. */
 export async function publicKeyInfo() {
+  const toConfigured = Boolean(normalizeTo(process.env.AUTHNUDGE_TO));
+  const apiKeyConfigured = readApiKey({}).startsWith("an_");
+  if (apiKeyConfigured) return { toConfigured, apiKeyConfigured };
   const keys = await loadPersistentKeys();
   return {
     publicKey: keys.publicKey,
     fingerprint: await requesterFingerprint(keys.publicKey),
-    toConfigured: Boolean(normalizeTo(process.env.AUTHNUDGE_TO)),
-    apiKeyConfigured: readApiKey({}).startsWith("an_"),
+    toConfigured,
+    apiKeyConfigured,
   };
 }
 
