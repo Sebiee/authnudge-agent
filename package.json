@@ -19,7 +19,7 @@
   ],
   "scripts": {
     "validate": "node scripts/validate-template.mjs",
-    "check": "node scripts/validate-template.mjs && node plugins/authnudge/login.check.mjs && node plugins/authnudge/cdp.check.mjs && node plugins/authnudge/mcp.check.mjs"
+    "check": "node scripts/validate-template.mjs && node plugins/authnudge/login.check.mjs && node plugins/authnudge/cdp.check.mjs && node plugins/authnudge/mcp.check.mjs && node plugins/authnudge/fill.e2e.mjs"
   },
   "engines": {
     "node": ">=22"

@@ -8,10 +8,14 @@ import { ignorePlaceholder, normalizeBaseUrl, normalizeOrigin, normalizeTo, same
 // const DEFAULT_BASE = "https://authnudge.com";
 const DEFAULT_BASE = "http://localhost:5173";
 
-const FORM_MS = 45_000; // SPA may still be rendering the login form
-const SETTLE_MS = 6_000; // after one submit, how long the step gets to go away
-const OTP_QUIET_MS = 8_000; // after the password step: no code prompt within this much page quiet = done
-const OTP_WATCH_MS = 20_000; // hard cap on that watch
+/** Wall-clock budgets (ms). Exported so checks can shrink them; not a config surface. */
+export const timing = {
+  form: 45_000, // SPA may still be rendering the login form
+  settle: 6_000, // after one submit, how long the step gets to go away
+  otpQuiet: 8_000, // after the password step: no code prompt within this much page quiet = done
+  otpWatch: 20_000, // hard cap on that watch
+  retypeAfter: 8_000, // identifier step still showing: type + submit again after this long
+};
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -135,21 +139,24 @@ async function filled(page, origin, kind) {
 
 /**
  * Submit the step that owns `kind` and wait until `done(state)` says it is over.
- * Click the form's submit button first (goes through overlays); if the step is still there, Enter in the field.
- * Two attempts max: a rejected password must not turn into a lockout.
+ * Click the form's real submit button (goes through overlays); if the step is still there, Enter in the field;
+ * requestSubmit() only when the form has no button at all. Two attempts max: a rejected password must not become a lockout.
  */
 async function submitStep(page, origin, kind, done) {
-  for (const how of ["click", "enter"]) {
+  let hadButton = false;
+  for (const how of ["click", "enter", "requestSubmit"]) {
     if (done(await state(page, origin))) return true;
-    if (how === "click") {
-      const clicked = await page.op({ op: "submit", kind, expectedOrigin: origin });
-      if (!clicked?.ok) continue;
-    } else {
+    if (how === "requestSubmit" && hadButton) break;
+    if (how === "enter") {
       const focused = await page.op({ op: "focus", kind, expectedOrigin: origin });
       if (!focused?.ok) continue;
       await page.pressEnter();
+    } else {
+      const sent = await page.op({ op: how, kind, expectedOrigin: origin });
+      if (!sent?.ok) continue;
+      if (how === "click") hadButton = true;
     }
-    const until = Date.now() + SETTLE_MS;
+    const until = Date.now() + timing.settle;
     while (Date.now() < until) {
       await page.waitForUpdate(500);
       if (done(await state(page, origin))) return true;
@@ -162,7 +169,7 @@ const passwordStepOver = (s) => s.gone || !s.password;
 const identifierStepOver = (s) => s.gone || s.password || s.otp || !s.identifier;
 
 async function fillCredentials(page, origin, identifier, secret) {
-  const deadline = Date.now() + FORM_MS;
+  const deadline = Date.now() + timing.form;
   let identifierSentAt = 0;
   while (Date.now() < deadline) {
     const s = await state(page, origin);
@@ -177,7 +184,7 @@ async function fillCredentials(page, origin, identifier, secret) {
       if (await submitStep(page, origin, "password", passwordStepOver)) return { ok: true };
       return { ok: false, status: "error", message: "The password was submitted but the site stayed on the password step." };
     }
-    if (s.identifier && Date.now() - identifierSentAt > 8_000) {
+    if (s.identifier && Date.now() - identifierSentAt > timing.retypeAfter) {
       if ((await type(page, origin, "identifier", identifier)) && (await filled(page, origin, "identifier"))) {
         identifierSentAt = Date.now();
         await submitStep(page, origin, "identifier", identifierStepOver);
@@ -226,11 +233,11 @@ async function useDelivery(page, origin, keys, requestId, envelope, kind) {
 /** Password is in. Watch briefly for a one-time-code prompt; if one shows, ask the phone for it and fill that too. */
 async function afterPassword(page, origin, keys, relay, lastCiphertext) {
   for (let round = 0; round < 2; round++) {
-    const cap = Date.now() + OTP_WATCH_MS;
-    let quietUntil = Date.now() + OTP_QUIET_MS;
+    const cap = Date.now() + timing.otpWatch;
+    let quietUntil = Date.now() + timing.otpQuiet;
     let s;
     do {
-      if (await page.waitForUpdate(700)) quietUntil = Date.now() + OTP_QUIET_MS; // still navigating
+      if (await page.waitForUpdate(700)) quietUntil = Date.now() + timing.otpQuiet; // still navigating
       s = await state(page, origin);
     } while (!s.otp && !s.gone && Date.now() < Math.min(cap, quietUntil));
     if (!s.otp) return { ok: true };

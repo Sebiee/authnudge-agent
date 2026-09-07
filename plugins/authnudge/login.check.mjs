@@ -4,8 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decryptEnvelope, encryptForRequester, generateRequesterKeys } from "./e2e.js";
 import { loginFormOp } from "./fill.js";
-import { login, publicKeyInfo } from "./login.mjs";
+import { login, publicKeyInfo, timing } from "./login.mjs";
 import { ignorePlaceholder, normalizeTo } from "./origin.js";
+
+// Fake pages react instantly; the budgets only need to be long enough for a few loop turns.
+Object.assign(timing, { form: 2_000, settle: 150, otpQuiet: 200, otpWatch: 500, retypeAfter: 300 });
 
 assert.equal(ignorePlaceholder("${AUTHNUDGE_API_KEY}"), "");
 assert.equal(ignorePlaceholder("  ${AUTHNUDGE_TO}  "), "");
@@ -92,11 +95,12 @@ function fakePage({ steps = ["identifier", "password", "done"], submitWorks = { 
         focused = arg.kind;
         return { ok: true };
       }
-      if (arg.op === "submit") {
+      if (arg.op === "click") {
         log.submits.push("click");
         if (submitWorks.click) advance();
-        return { ok: true, how: "click" };
+        return { ok: true };
       }
+      if (arg.op === "requestSubmit") throw new Error("requestSubmit must not run when the form has a button");
       throw new Error(`unexpected op ${arg.op}`);
     },
   };

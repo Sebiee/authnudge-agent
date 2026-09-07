@@ -1,0 +1,86 @@
+<!doctype html>
+<!-- Mock of a Galaxus-style login: two steps, React-like state (only `input` events count),
+     consent overlay over every button, social-login decoy, then a one-time code.
+     ?boxes=1 -> six type=tel boxes copied from Galaxus (no maxlength, auto-submit, only a "resend" button)
+     ?slow=1  -> password step renders late      ?nootp=1 -> no code step -->
+<html><head><meta charset="utf-8"><title>mock login</title>
+<style>#consent{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999}.hidden{display:none}</style></head>
+<body>
+<div id="consent">cookie overlay</div>
+<header><input type="search" name="q" placeholder="Suche"></header>
+
+<form id="step1">
+  <label>E-Mail <input type="email" name="email" autocomplete="username"></label>
+  <button type="submit">Weiter</button>
+</form>
+
+<form id="step2" class="hidden">
+  <input type="email" name="email2" readonly>
+  <label>Passwort <input type="password" name="password" autocomplete="current-password"></label>
+  <button type="button" onclick="log('eye')">👁</button>
+  <button type="submit">Anmelden</button>
+  <button type="button" onclick="log('GOOGLE CLICKED')">Mit Google anmelden</button>
+</form>
+
+<form id="step3" class="hidden">
+  <div id="single"><label>Sicherheitscode <input type="text" name="code" autocomplete="one-time-code" inputmode="numeric" maxlength="6"></label></div>
+  <div id="boxes" class="hidden">
+    <div>Anmelde-Code</div>
+    <input pattern="[0-9]{1}" aria-label="Character 1." inputmode="numeric" autocomplete="off" type="tel" name="otp-code">
+    <input pattern="[0-9]{1}" aria-label="Character 2." inputmode="numeric" autocomplete="off" type="tel" name="otp-code">
+    <input pattern="[0-9]{1}" aria-label="Character 3." inputmode="numeric" autocomplete="off" type="tel" name="otp-code">
+    <input pattern="[0-9]{1}" aria-label="Character 4." inputmode="numeric" autocomplete="off" type="tel" name="otp-code">
+    <input pattern="[0-9]{1}" aria-label="Character 5." inputmode="numeric" autocomplete="off" type="tel" name="otp-code">
+    <input pattern="[0-9]{1}" aria-label="Character 6." inputmode="numeric" autocomplete="off" type="tel" name="otp-code">
+    <button type="button" onclick="log('RESEND CLICKED')">Neuen Code senden</button>
+  </div>
+  <button type="submit" id="otpsubmit">Bestätigen</button>
+</form>
+
+<p id="error"></p><p id="log"></p>
+<footer><input type="email" name="newsletter" placeholder="Newsletter"></footer>
+
+<script>
+  const state = { email: "", password: "", code: "" };
+  const params = new URLSearchParams(location.search);
+  const $ = (s) => document.querySelector(s);
+  window.log = (m) => { $("#log").textContent = m; };
+  const err = (m) => { $("#error").textContent = m; };
+  const show = (id) => { for (const f of ["step1", "step2", "step3"]) document.getElementById(f).classList.toggle("hidden", f !== id); };
+  const wire = (el, key) => el.addEventListener("input", (e) => { state[key] = e.target.value; });
+  wire($("#step1 input[name=email]"), "email");
+  wire($("#step2 input[name=password]"), "password");
+  wire($("#step3 input[name=code]"), "code");
+  const boxes = [...document.querySelectorAll("#boxes input")];
+  boxes.forEach((b) => b.addEventListener("input", () => { state.code = boxes.map((x) => x.value).join(""); }));
+  if (params.get("boxes")) {
+    $("#single").classList.add("hidden");
+    $("#boxes").classList.remove("hidden");
+    $("#otpsubmit").remove();
+    boxes[5].addEventListener("input", () => { if (state.code.length === 6) $("#step3").requestSubmit(); });
+  }
+  $("#step1").onsubmit = (e) => {
+    e.preventDefault();
+    if (!state.email) return err("no email");
+    $("#step2 input[name=email2]").value = state.email;
+    if (params.get("slow")) setTimeout(() => show("step2"), 1500); else show("step2");
+  };
+  $("#step2").onsubmit = async (e) => {
+    e.preventDefault();
+    await new Promise((r) => setTimeout(r, 300)); // async handler, like a fetch
+    if (state.password !== "s3cret!") {
+      $("#step2 input[name=password]").value = "";
+      state.password = "";
+      window.fails = (window.fails || 0) + 1;
+      return err("password incorrect x" + window.fails);
+    }
+    if (params.get("nootp")) return location.assign("/done");
+    show("step3");
+  };
+  $("#step3").onsubmit = (e) => {
+    e.preventDefault();
+    if (state.code !== "123456") return err("code incorrect");
+    location.assign("/done");
+  };
+</script>
+</body></html>

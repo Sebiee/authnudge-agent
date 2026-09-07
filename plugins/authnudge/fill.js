@@ -29,7 +29,9 @@ export function loginFormOp({ op, kind, index = 0, expectedOrigin }) {
     return rect.width >= 2 && rect.height >= 2;
   };
   const hint = (el) =>
-    `${el.autocomplete || ""} ${el.name || ""} ${el.id || ""} ${el.placeholder || ""} ${el.getAttribute("inputmode") || ""}`.toLowerCase();
+    `${el.autocomplete || ""} ${el.name || ""} ${el.id || ""} ${el.placeholder || ""} ${el.getAttribute("inputmode") || ""} ${el.getAttribute("aria-label") || ""} ${[...(el.labels ?? [])].map((l) => l.textContent).join(" ")}`
+      .replace(/\s+/g, " ")
+      .toLowerCase();
   const inputs = () => [...document.querySelectorAll("input")].filter(visible);
   const NOT_TEXT = ["password", "hidden", "submit", "button", "checkbox", "radio", "file", "reset", "image", "search"];
 
@@ -37,18 +39,18 @@ export function loginFormOp({ op, kind, index = 0, expectedOrigin }) {
     const type = (el.type || "text").toLowerCase();
     const text = hint(el);
     const max = Number(el.maxLength);
-    const numeric = (el.getAttribute("inputmode") || "").toLowerCase() === "numeric" || type === "tel";
+    const numeric = (el.getAttribute("inputmode") || "").toLowerCase() === "numeric" || type === "tel" || type === "number";
+    // One character per box (maxlength=1 or pattern like [0-9]{1}): only ever a code.
+    if (max === 1 || /^(\[0-9\]|\\d)(\{1\})?$/.test(el.getAttribute("pattern") || "")) return true;
     if ((el.autocomplete || "").toLowerCase() === "one-time-code") return true;
-    if (numeric && ((max >= 4 && max <= 8) || max === 1)) return true;
-    if (/(^|[^a-z])(otp|totp|2fa|mfa)([^a-z]|$)/.test(text)) return true;
-    return /(verification code|one[- ]time|security code|login code|auth code)/.test(text);
+    if (numeric && max >= 4 && max <= 8) return true;
+    if (/(^|[^a-z])(otp|totp|2fa|mfa|code)([^a-z]|$)/.test(text)) return true;
+    return /(verification code|one[- ]time|security code|login code|auth code|einmalcode)/.test(text);
   };
-  // One code field, or 4–8 single-character boxes.
+  // One code field, or 4–8 one-character boxes (Galaxus: six type=tel name="otp-code" boxes, no maxlength).
   const otpBoxes = () => {
     const list = inputs().filter((el) => !NOT_TEXT.includes((el.type || "text").toLowerCase()) && looksLikeOtp(el));
-    if (list.length === 1) return list;
-    if (list.length >= 4 && list.length <= 8 && list.every((el) => Number(el.maxLength) === 1)) return list;
-    return [];
+    return list.length === 1 || (list.length >= 4 && list.length <= 8) ? list : [];
   };
 
   const passwords = () => inputs().filter((el) => el.type === "password" && !hint(el).includes("new-password"));
@@ -92,12 +94,15 @@ export function loginFormOp({ op, kind, index = 0, expectedOrigin }) {
   const looksLikeSubmit = (el) => {
     const text = label(el);
     if (!text || text.length > 48) return false;
-    if (/google|apple|facebook|microsoft|github|passkey|forgot|vergessen|oubli|register|registr|sign\s*up/i.test(text)) return false;
+    if (/google|apple|facebook|microsoft|github|passkey|forgot|vergessen|oubli|register|registr|sign\s*up|resend|neuen? code|renvoyer|cancel|abbrechen/i.test(text)) {
+      return false;
+    }
     return /continue|next|log\s*in|sign\s*in|submit|verify|confirm|anmelden|weiter|best[äa]tigen|se connecter|connexion|continuer|accedi|avanti|entrar|siguiente/i.test(
       text,
     );
   };
-  // Browser order first: the form's default button is what Enter would press.
+  // Browser order first: the form's default button is what Enter would press. Never guess a lone
+  // button (Galaxus's code form only has "Neuen Code senden").
   const findSubmit = (el) => {
     const form = el.form ?? el.closest("form");
     if (form) {
@@ -106,7 +111,7 @@ export function loginFormOp({ op, kind, index = 0, expectedOrigin }) {
         list.find((b) => b.matches("button[type=submit], input[type=submit]")) ??
         list.find((b) => b.matches("button:not([type])")) ??
         list.find(looksLikeSubmit) ??
-        (list.length === 1 ? list[0] : null)
+        null
       );
     }
     // Form-less (div) forms: nearest ancestor that holds a submit-looking control.
@@ -146,18 +151,17 @@ export function loginFormOp({ op, kind, index = 0, expectedOrigin }) {
     }
     return { ok: document.activeElement === el };
   }
-  if (op === "submit") {
+  if (op === "click") {
     const button = findSubmit(el);
-    if (button) {
-      button.click();
-      return { ok: true, how: "click" };
-    }
+    if (!button) return { ok: false, reason: "no_button" };
+    button.click();
+    return { ok: true };
+  }
+  if (op === "requestSubmit") {
     const form = el.form ?? el.closest("form");
-    if (form && typeof form.requestSubmit === "function") {
-      form.requestSubmit();
-      return { ok: true, how: "requestSubmit" };
-    }
-    return { ok: false, reason: "no_button" };
+    if (!form || typeof form.requestSubmit !== "function") return { ok: false, reason: "no_form" };
+    form.requestSubmit();
+    return { ok: true };
   }
   return { ok: false, reason: "bad_op" };
 }
