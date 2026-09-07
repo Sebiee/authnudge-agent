@@ -54,18 +54,19 @@ async function loadPersistentKeys() {
   return keys;
 }
 
-/** Public SPKI only. Private key stays in the key file. No key pair when an API key is already set. */
+/** Public SPKI only. Private key stays in the key file. The OAuth `login` tool needs this key, so it is always returned. */
 export async function publicKeyInfo() {
-  const toConfigured = Boolean(normalizeTo(process.env.AUTHNUDGE_TO));
-  const apiKeyConfigured = readApiKey({}).startsWith("an_");
-  if (apiKeyConfigured) return { toConfigured, apiKeyConfigured };
   const keys = await loadPersistentKeys();
   return {
     publicKey: keys.publicKey,
     fingerprint: await requesterFingerprint(keys.publicKey),
-    toConfigured,
-    apiKeyConfigured,
+    toConfigured: Boolean(normalizeTo(process.env.AUTHNUDGE_TO)),
+    apiKeyConfigured: readApiKey({}).startsWith("an_"),
   };
+}
+
+function resolveBaseUrl(options) {
+  return normalizeBaseUrl(ignorePlaceholder(options.baseUrl ?? process.env.AUTHNUDGE_URL) || DEFAULT_BASE);
 }
 
 export async function createCredentialRequest({ baseUrl, to, origin, apiKey, publicKey, signature }) {
@@ -255,7 +256,45 @@ async function afterPassword(page, origin, keys, relay, lastCiphertext) {
   return { ok: true };
 }
 
-/** Fill `page` after the account holder grants on their phone. Never returns usernames or passwords. */
+/** The relay has an open request: wait for the grant, decrypt with `keys`, fill `page`, handle a code step. */
+async function fillFromRelay(page, origin, keys, relay) {
+  const waited = await waitForEnvelope(relay);
+  if (!waited.envelope) return { ok: false, status: waited.status === "expired" ? "expired" : "error" };
+
+  const first = await useDelivery(page, origin, keys, relay.requestId, waited.envelope, waited.envelopeKind);
+  if (!first.ok) return first;
+  return afterPassword(page, origin, keys, relay, waited.envelope.ciphertext);
+}
+
+/**
+ * Fill `page` for a request the Authnudge OAuth MCP `login` tool already opened (it was given this
+ * machine's `publicKey`). No handle, API key, or pairing needed. Never returns usernames or passwords.
+ */
+export async function fill(page, options = {}) {
+  const requestId = String(options.requestId ?? "").trim();
+  const claimToken = String(options.claimToken ?? "").trim();
+  if (!requestId || !claimToken) {
+    return { ok: false, status: "error", message: "Pass requestId and claimToken from the Authnudge `login` tool result." };
+  }
+  let baseUrl;
+  try {
+    baseUrl = resolveBaseUrl(options);
+  } catch {
+    return { ok: false, status: "error", message: "AUTHNUDGE_URL must be http or https." };
+  }
+  const origin = normalizeOrigin(options.origin ?? (await page.url()));
+  if (!origin) return { ok: false, status: "error", message: "The page URL is not a login origin." };
+
+  return fillFromRelay(page, origin, await loadPersistentKeys(), {
+    baseUrl,
+    requestId,
+    claimToken,
+    expiresAt: Date.parse(options.expiresAt) || Date.now() + 5 * 60 * 1000,
+    signal: options.signal,
+  });
+}
+
+/** Fallback without OAuth: open the request here with a handle plus API key or paired key, then fill `page`. */
 export async function login(page, options = {}) {
   const to = normalizeTo(options.to ?? process.env.AUTHNUDGE_TO);
   const apiKey = readApiKey(options);
@@ -265,7 +304,7 @@ export async function login(page, options = {}) {
   }
   let baseUrl;
   try {
-    baseUrl = normalizeBaseUrl(ignorePlaceholder(options.baseUrl ?? process.env.AUTHNUDGE_URL) || DEFAULT_BASE);
+    baseUrl = resolveBaseUrl(options);
   } catch {
     return { ok: false, status: "error", message: "AUTHNUDGE_URL must be http or https." };
   }
@@ -300,23 +339,17 @@ export async function login(page, options = {}) {
   if (created.status === 429) return { ok: false, status: "error", message: "Inbox is full. Try again shortly." };
   if (created.status !== 201) return { ok: false, status: "error", message: "Could not create a credential request." };
 
-  const relay = {
+  return fillFromRelay(page, origin, keys, {
     baseUrl,
     requestId: created.body.requestId,
     claimToken: created.body.claimToken,
     expiresAt: Date.parse(created.body.expiresAt) || Date.now() + 5 * 60 * 1000,
     signal: options.signal,
-  };
-  const waited = await waitForEnvelope(relay);
-  if (!waited.envelope) return { ok: false, status: waited.status === "expired" ? "expired" : "error" };
-
-  const first = await useDelivery(page, origin, keys, relay.requestId, waited.envelope, waited.envelopeKind);
-  if (!first.ok) return first;
-  return afterPassword(page, origin, keys, relay, waited.envelope.ciphertext);
+  });
 }
 
-/** Same as `login`, but the page is a tab in Chrome with remote debugging (default port 9222), not another agent's browser. */
-export async function loginCdp(options = {}) {
+/** Run `step` on a tab in Chrome with remote debugging (default port 9222), not another agent's browser. */
+async function onCdpPage(options, step) {
   let page;
   try {
     page = await attachCdpPage(options.cdpUrl, options.url);
@@ -326,8 +359,11 @@ export async function loginCdp(options = {}) {
     return { ok: false, status: "error", message: err instanceof Error ? err.message : "No browser." };
   }
   try {
-    return await login(page, options);
+    return await step(page, options);
   } finally {
     page.close();
   }
 }
+
+export const fillCdp = (options = {}) => onCdpPage(options, fill);
+export const loginCdp = (options = {}) => onCdpPage(options, login);

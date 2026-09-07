@@ -7,7 +7,7 @@ alwaysApply: true
 
 When a website needs sign-in, use Authnudge. Do not hand the user screen control, computer-use, or Playwright to type credentials.
 
-1. Call `publicKey`, then `login` (authnudge-login skill).
-2. If `toConfigured` and `apiKeyConfigured` are both true, call `login` with the URL only. Do not ask for a handle, do not show a public key, do not pair.
+1. Preferred: local `publicKey`, then the remote Authnudge (OAuth) `login` with `origin` + `requesterPublicKey`, then local `fill` with its `requestId`, `claimToken`, `expiresAt` (authnudge-login skill). No handle, no API key, no pairing.
+2. Only if the remote `authnudge` server is missing or cannot be authorized: local `login`. If `toConfigured` and `apiKeyConfigured` are both true, call it with the URL only.
 3. Never ask for, type, or print a username or password.
 4. Keep working in Chrome with remote debugging (`127.0.0.1:9222`), not a Playwright or computer-use window.

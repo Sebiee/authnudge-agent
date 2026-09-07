@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decryptEnvelope, encryptForRequester, generateRequesterKeys } from "./e2e.js";
 import { loginFormOp } from "./fill.js";
-import { login, publicKeyInfo, timing } from "./login.mjs";
+import { fill, login, publicKeyInfo, timing } from "./login.mjs";
 import { ignorePlaceholder, normalizeTo } from "./origin.js";
 
 // Fake pages react instantly; the budgets only need to be long enough for a few loop turns.
@@ -147,6 +147,27 @@ function mockRelay(requestId, { status = 201, checkPost, otpCode = "123456" } = 
 
 const opts = { to: "you@example.com", baseUrl: "http://127.0.0.1:9" };
 
+// OAuth path: the remote `login` tool already opened the request with our publicKey; `fill` only polls and fills.
+{
+  const page = fakePage({ steps: ["identifier", "password", "otp", "done"] });
+  const seen = mockRelay("req-oauth");
+  const { publicKey } = await publicKeyInfo();
+  // mockRelay learns the requester key from the create POST; the OAuth server did that for us. Prime it the same way.
+  await fetch("http://127.0.0.1:9/api/v1/requests", { method: "POST", body: JSON.stringify({ requesterPublicKey: publicKey }) });
+  const grant = { requestId: "req-oauth", claimToken: "claim-req-oauth", expiresAt: new Date(Date.now() + 60_000).toISOString() };
+  const result = await fill(page, { ...grant, baseUrl: opts.baseUrl });
+  assert.deepEqual(result, { ok: true });
+  assert.equal(seen.continue, 1);
+  assert.deepEqual(page.log.typed, ["identifier:7", "password:6", "otp:6"]);
+  assert.equal(JSON.stringify(result).includes("s3cret"), false);
+}
+globalThis.fetch = async () => {
+  throw new Error("fill must not call Authnudge without a claim");
+};
+const noClaim = await fill(fakePage(), { requestId: "x", baseUrl: opts.baseUrl });
+assert.equal(noClaim.status, "error");
+assert.match(noClaim.message, /claimToken/);
+
 // Pairing: unsigned key is rejected with 401 -> hand back the public key, never the private one.
 mockRelay("req-0", {
   status: 401,
@@ -260,6 +281,6 @@ process.env.AUTHNUDGE_API_KEY = "an_testkey_xxxxxxxx";
 const configured = await publicKeyInfo();
 assert.equal(configured.toConfigured, true);
 assert.equal(configured.apiKeyConfigured, true);
-assert.equal("publicKey" in configured, false);
+assert.equal(configured.publicKey, shown.publicKey); // OAuth `login` needs the key even when a fallback API key is set
 
 console.log("agent login check ok");

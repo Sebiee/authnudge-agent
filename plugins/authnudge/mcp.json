@@ -1,6 +1,10 @@
 {
   "mcpServers": {
     "authnudge": {
+      "type": "http",
+      "url": "https://authnudge.com/mcp"
+    },
+    "authnudge-chrome": {
       "command": "npx",
       "args": ["-y", "authnudge-mcp"],
       "env": {

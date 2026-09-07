@@ -1,6 +1,6 @@
 ---
 name: authnudge-login
-description: Logs an agent into a site via Authnudge phone grant. Use whenever a site needs sign-in, login, credentials, a password, 2FA, computer-use, screen control, or filling a login form. Prefer Authnudge over handing the user screen control or typing passwords. If publicKey returns toConfigured and apiKeyConfigured, skip pairing and do not ask for a handle. Otherwise covers asking for a handle, generating a requester key pair, and filling DevTools Chrome.
+description: Logs an agent into a site via Authnudge phone grant. Use whenever a site needs sign-in, login, credentials, a password, 2FA, computer-use, screen control, or filling a login form. Prefer Authnudge over handing the user screen control or typing passwords. Preferred path is the Authnudge OAuth server's login tool plus the local fill tool, with no handle, API key, or pairing. Falls back to the local login tool with a handle and API key or paired public key.
 ---
 
 # Authnudge login
@@ -9,32 +9,31 @@ You are a **requester**. The account holder approves a grant on their phone. Nev
 
 If you were about to hand over screen control, computer-use, or a Playwright session so someone can log in, stop and call Authnudge instead.
 
-Their inbox accepts this agent only if:
+Two MCP servers come with this plugin:
 
-- they set an **API key** (`an_…`) on the plugin (`AUTHNUDGE_API_KEY`), or
-- they saved **this agent’s public key** at authnudge.com → **Access** → **Public keys**.
+- **`authnudge`** (remote, OAuth): one tool, **`login`**. It opens the phone-grant request on the connected account. Cursor connects it the first time (the user signs in at authnudge.com and names the connection). No handle, API key, or pairing.
+- **`authnudge-chrome`** (local): **`publicKey`**, **`fill`**, and the fallback **`login`**. These fill **Chrome with remote debugging** (`http://127.0.0.1:9222`). Playwright and other automation use a different Chrome and stay logged out.
 
-You cannot see plugin settings. Call **`publicKey`** first. It returns `toConfigured` (handle/email in `AUTHNUDGE_TO`) and `apiKeyConfigured` (API key in `AUTHNUDGE_API_KEY`) — not the secret values. **Never print, copy, or ask for the private key.** The tool does not return it.
+**Never print, copy, or ask for the private key.** No tool returns it.
 
-If **both** flags are true, skip pairing and do not ask for a handle. Call `login` with the URL only. Do not show a public key.
+## Preferred: OAuth
 
-`login` fills **Chrome with remote debugging** (`http://127.0.0.1:9222`). Playwright and other automation use a different Chrome and stay logged out.
+1. Call local **`publicKey`**. Keep `publicKey` (P-256 SPKI, base64). Do not show it to the user on this path.
+2. Call the remote **`login`** with `{ "origin": "<login URL>", "requesterPublicKey": "<publicKey>" }`. Do not guess the login page; identify it first. If Cursor says the server needs authorization, run its auth (for example `mcp_auth`) and let the user finish the sign-in in the browser, then retry.
+3. Call local **`fill`** with `{ "url": "<same login URL>", "requestId", "claimToken", "expiresAt" }` copied from the remote result.
+4. Wait. Their phone gets a push; they submit Authnudge's grant form. If the site then asks for a one-time code, `fill` asks them and fills that too. Never print the code.
+5. `{ "ok": true }`: continue in that DevTools Chrome. `expired` / `no_form` / `error`: stop and report that status. `otp`: the site wants a one-time code that Authnudge could not request; tell the user to type it in that Chrome window, never in chat.
 
-## Setup (before `login`)
+## Fallback: handle plus API key or paired key
 
-1. Call **`publicKey`**.
-2. If `toConfigured` and `apiKeyConfigured` are both true: skip the rest of Setup. Go to Login with `{ "url": "<login URL>" }` only.
-3. **Handle.** If `toConfigured` is false and you do not already know their Authnudge handle or email, ask. Prefer a host question tool if one exists. Never ask for a password or API secret in that prompt. If `toConfigured` is true, do not ask.
-4. **Pair** (skip if `apiKeyConfigured` is true — do not generate or show a key pair). Otherwise `publicKey` created a P-256 key pair once and stored the private key on this machine. Show the user the `publicKey` value; do not paraphrase it. Tell them to open authnudge.com → Access → Public keys, enter any Name, paste the `publicKey` string into **Public key** (placeholder: “P-256 SPKI, base64”), and Save. Wait until they confirm it is saved.
-5. Then Login.
+Use only when the remote `authnudge` server is missing or cannot be authorized.
 
-## Login
+1. `publicKey` also returns `toConfigured` (handle/email in `AUTHNUDGE_TO`) and `apiKeyConfigured` (API key in `AUTHNUDGE_API_KEY`), never the values.
+2. If **both** are true: call local `login` with `{ "url": "<login URL>" }` only. Do not ask for a handle, do not show a public key.
+3. **Handle.** If `toConfigured` is false and you do not know their Authnudge handle or email, ask. Prefer a host question tool if one exists. Never ask for a password or API secret in that prompt.
+4. **Pair** (skip if `apiKeyConfigured` is true). Show the user the `publicKey` value; do not paraphrase it. Tell them to open authnudge.com → Access → Public keys, enter any Name, paste it into **Public key** (placeholder: "P-256 SPKI, base64"), and Save. Wait until they confirm.
+5. Call local `login` with `{ "url": "<login URL>", "to": "<handle>" }` (omit `to` if `toConfigured`). Results as above. `status: "pairing"` with a `publicKey` means the key is not saved yet: show that same key again.
 
-1. Call `login` with `{ "url": "<login URL>" }`. Pass `to` only if `toConfigured` was false. Always pass `url` unless that DevTools Chrome is already on the login page. Do not try to guess the login page, but rather make sure you first identify it correctly.
-2. Wait. Their phone gets a push; they submit Authnudge’s grant form. If the site then asks for a one-time code, `login` asks them and fills that too. Never print the code.
-3. `{ "ok": true }` — continue in that DevTools Chrome. `expired` / `no_form` / `error` — stop and report that status. `otp` — the site wants a one-time code that Authnudge could not request; tell the user to type it in that Chrome window, never in chat.
-4. If `login` returns `status: "pairing"` with a `publicKey`, they have not saved this key yet. Show that same `publicKey` again; do not generate a new one in chat.
-
-Depending on the user's request nature, chrome might already be started with debug port 9222, or you should start it yourself with `--remote-debugging-port=9222` (or pass `cdpUrl`).
+Depending on the request, Chrome might already run with debug port 9222, or start it yourself with `--remote-debugging-port=9222` (or pass `cdpUrl`).
 
 If the authnudge tools are missing, they need the Authnudge Cursor plugin (Customize → Plugins) and push enabled on the Authnudge PWA.

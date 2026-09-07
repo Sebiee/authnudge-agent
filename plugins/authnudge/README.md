@@ -14,10 +14,18 @@ Playwright, computer-use, and other browser-automation windows are a different C
 
 ## Included
 
-- `mcp.json`: `publicKey` (SPKI pairing) and `login` via `npx -y authnudge-mcp`
-- `skills/authnudge-login/`: when and how to call `login`
+- `mcp.json`, two servers:
+  - `authnudge` — remote `https://authnudge.com/mcp`, OAuth. Cursor connects it once (sign in, name the connection). Its `login` opens the phone-grant request. Preferred.
+  - `authnudge-chrome` — local `npx -y authnudge-mcp`: `publicKey`, `fill` (finish the OAuth request in Chrome), and the fallback `login`.
+- `skills/authnudge-login/`: OAuth flow first, fallback second
 - `rules/prefer-authnudge-login.mdc`: always-on — prefer Authnudge over screen control / computer-use for login
-- Optional plugin variables: `AUTHNUDGE_TO`, `AUTHNUDGE_API_KEY` (Plugins → Configure)
+- Optional fallback variables: `AUTHNUDGE_TO`, `AUTHNUDGE_API_KEY` (Plugins → Configure). Not needed with OAuth.
+
+## Flow
+
+1. `publicKey` (local) → this machine's P-256 public key.
+2. `login` (remote, OAuth) with `origin` + `requesterPublicKey` → `requestId`, `claimToken`, `expiresAt`.
+3. `fill` (local) with the same `url` and those three values → waits for the phone grant, decrypts with the local private key, fills Chrome.
 
 ## Checks
 

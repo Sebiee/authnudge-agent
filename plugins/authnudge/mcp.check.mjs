@@ -14,20 +14,32 @@ assert.equal(plugin.name, "authnudge");
 assert.equal(plugin.repository, "https://github.com/Sebiee/authnudge-agent");
 assert.equal(plugin.version, pkg.version);
 assert.equal(pkg.bin["authnudge-mcp"], "authnudge-mcp");
-assert.equal(mcp.mcpServers.authnudge.command, "npx");
-assert.deepEqual(mcp.mcpServers.authnudge.args, ["-y", "authnudge-mcp"]);
-assert.equal("cwd" in mcp.mcpServers.authnudge, false);
+// OAuth server first: Cursor runs the OAuth flow itself for `url` servers; no variables involved.
+assert.deepEqual(Object.keys(mcp.mcpServers), ["authnudge", "authnudge-chrome"]);
+assert.equal(mcp.mcpServers.authnudge.url, "https://authnudge.com/mcp");
+assert.equal("env" in mcp.mcpServers.authnudge, false);
+const local = mcp.mcpServers["authnudge-chrome"];
+assert.equal(local.command, "npx");
+assert.deepEqual(local.args, ["-y", "authnudge-mcp"]);
+assert.equal("cwd" in local, false);
 assert.doesNotMatch(JSON.stringify(mcp), /\$\{PLUGIN_ROOT\}/);
 assert.doesNotMatch(JSON.stringify(mcp), /input-type=module/);
 const placeholders = [...JSON.stringify(mcp).matchAll(/\$\{([A-Z][A-Z0-9_]*)\}/g)].map((m) => m[1]);
-assert.deepEqual([...new Set(placeholders)].sort(), ["AUTHNUDGE_API_KEY", "AUTHNUDGE_TO"]);
+assert.deepEqual([...new Set(placeholders)].sort(), Object.keys(plugin.variables.properties).sort());
 
 const skill = readFileSync(join(here, "skills/authnudge-login/SKILL.md"), "utf8");
-assert.match(skill, /Call \*\*`publicKey`\*\*/);
+const rule = readFileSync(join(here, "rules/prefer-authnudge-login.mdc"), "utf8");
+assert.match(skill, /## Preferred: OAuth/);
+assert.ok(skill.indexOf("## Preferred: OAuth") < skill.indexOf("## Fallback"));
+assert.match(skill, /Call local \*\*`publicKey`\*\*/);
+assert.match(skill, /"requesterPublicKey"/);
+assert.match(skill, /Call local \*\*`fill`\*\*/);
 assert.match(skill, /Never print, copy, or ask for the private key/);
 assert.match(skill, /host question tool/);
-assert.match(skill, /both\*\* flags are true, skip pairing and do not ask for a handle/);
-assert.doesNotMatch(plugin.variables.properties.AUTHNUDGE_API_KEY.description, /login returns a public key/);
+assert.match(skill, /If \*\*both\*\* are true: call local `login`/);
+assert.match(rule, /`login` with `origin` \+ `requesterPublicKey`, then local `fill`/);
+assert.match(plugin.variables.properties.AUTHNUDGE_TO.description, /fallback/i);
+assert.match(plugin.variables.properties.AUTHNUDGE_API_KEY.description, /fallback/i);
 
 function encode(msg) {
   return `${JSON.stringify(msg)}\n`;
@@ -75,12 +87,16 @@ async function handshake(command, args, cwd) {
     assert.equal(init.result.serverInfo.name, "authnudge");
     child.stdin.write(encode({ jsonrpc: "2.0", id: 2, method: "tools/list" }));
     const listed = await next();
-    const names = listed.result.tools.map((t) => t.name).sort();
-    assert.deepEqual(names, ["login", "publicKey"]);
+    const names = listed.result.tools.map((t) => t.name);
+    assert.deepEqual(names, ["publicKey", "fill", "login"]); // preferred order, as agents read it
     const pub = listed.result.tools.find((t) => t.name === "publicKey");
     assert.match(pub.description, /never returned/i);
+    const fillTool = listed.result.tools.find((t) => t.name === "fill");
+    assert.match(fillTool.description, /^Preferred\./);
+    assert.match(fillTool.description, /Never returns usernames/);
+    assert.deepEqual(fillTool.inputSchema.required, ["url", "requestId", "claimToken"]);
     const loginTool = listed.result.tools.find((t) => t.name === "login");
-    assert.match(loginTool.description, /Never returns usernames/);
+    assert.match(loginTool.description, /^Fallback/);
   } finally {
     clearTimeout(timeout);
     child.kill();

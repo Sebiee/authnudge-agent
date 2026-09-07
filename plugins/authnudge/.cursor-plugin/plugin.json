@@ -1,8 +1,8 @@
 {
   "name": "authnudge",
   "displayName": "Authnudge",
-  "version": "0.1.8",
-  "description": "Log an agent into a website by approving on your phone. Fills Chrome with remote debugging. Usernames and passwords never appear in chat.",
+  "version": "0.2.0",
+  "description": "Log an agent into a website by approving on your phone. Connect your Authnudge account with OAuth, or set a handle and API key. Fills Chrome with remote debugging. Usernames and passwords never appear in chat.",
   "author": {
     "name": "Authnudge",
     "email": "sebastian@authnudge.com"
@@ -18,12 +18,12 @@
       "AUTHNUDGE_TO": {
         "type": "string",
         "title": "Authnudge email or handle",
-        "description": "Optional. If set, login uses this handle and the agent must not ask for one."
+        "description": "Optional fallback when the Authnudge OAuth connection is not used. If set, the fallback login uses this handle and the agent must not ask for one."
       },
       "AUTHNUDGE_API_KEY": {
         "type": "string",
         "title": "API key",
-        "description": "Optional. Dashboard API key (an_…). If set, the agent must not generate a key pair or ask you to paste a public key. If omitted, the agent generates a key pair and you paste the public SPKI under Access → Public keys."
+        "description": "Optional fallback when the Authnudge OAuth connection is not used. Dashboard API key (an_…). If set, the agent must not ask you to paste a public key. If omitted too, the agent shows its public key and you paste it under Access → Public keys."
       }
     }
   }

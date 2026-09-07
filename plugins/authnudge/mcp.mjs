@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
-import { loginCdp, publicKeyInfo } from "./login.mjs";
+import { fillCdp, loginCdp, publicKeyInfo } from "./login.mjs";
 
 function readVersion() {
   for (const name of ["./package.json", "./.cursor-plugin/plugin.json", "../../package.json"]) {
@@ -16,36 +16,57 @@ function readVersion() {
 
 const version = readVersion();
 
+const URL_ARG = {
+  type: "string",
+  description: "Login page to open in the DevTools Chrome before filling, e.g. https://www.galaxus.ch/login",
+};
+const CDP_ARG = {
+  type: "string",
+  description: "Chrome DevTools HTTP URL. Defaults to AUTHNUDGE_CDP_URL or http://127.0.0.1:9222.",
+};
+
 const TOOLS = [
   {
     name: "publicKey",
     description:
-      "Call before login. Returns booleans toConfigured / apiKeyConfigured (not the secret values). If apiKeyConfigured is true, no key pair is created and publicKey is omitted — go straight to login. Otherwise creates (once) or returns this agent's requester public key as P-256 SPKI base64. The matching private key is stored on this machine and is never returned. The account holder pastes publicKey at authnudge.com → Access → Public keys so signed grant requests are allowed.",
+      "Call first. Creates (once) or returns this agent's requester public key as P-256 SPKI base64: pass it as requesterPublicKey to the Authnudge (OAuth) server's `login` tool, then call `fill` with that result. The matching private key is stored on this machine and is never returned. Also returns booleans toConfigured / apiKeyConfigured (not the secret values) for the fallback `login` tool here.",
     inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "fill",
+    description:
+      "Preferred. After the Authnudge (OAuth) server's `login` tool opened a request with this agent's publicKey, wait for the phone grant and fill the login form in Chrome with remote debugging (default http://127.0.0.1:9222). Pass requestId, claimToken, and expiresAt from that result, plus the same login url. Stays if the site asks for a one-time code. Does not fill Playwright, computer-use, or other browser-automation tabs. Never returns usernames, passwords, codes, or the requester private key.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: URL_ARG,
+        requestId: { type: "string", description: "requestId from the Authnudge `login` tool result." },
+        claimToken: { type: "string", description: "claimToken from the Authnudge `login` tool result." },
+        expiresAt: { type: "string", description: "expiresAt (ISO) from the Authnudge `login` tool result." },
+        cdpUrl: CDP_ARG,
+      },
+      required: ["url", "requestId", "claimToken"],
+    },
   },
   {
     name: "login",
     description:
-      "Create a phone-grant request and fill the login form in Chrome with remote debugging (default http://127.0.0.1:9222). Stays if they ask for a one-time code. Does not fill Playwright, computer-use, or other browser-automation tabs. Never returns usernames, passwords, codes, or the requester private key. Pass `to` (Authnudge email or handle) unless AUTHNUDGE_TO is set. Pairing (saving this agent's public key) must already be done via publicKey unless AUTHNUDGE_API_KEY is set. Start Chrome with --remote-debugging-port=9222.",
+      "Fallback when the Authnudge (OAuth) server is not connected. Creates the phone-grant request here and fills the login form in Chrome with remote debugging (default http://127.0.0.1:9222). Needs `to` (Authnudge email or handle) unless AUTHNUDGE_TO is set, and either AUTHNUDGE_API_KEY or this agent's publicKey saved at authnudge.com → Access → Public keys. Same filling and secrecy rules as `fill`.",
     inputSchema: {
       type: "object",
       properties: {
-        url: {
-          type: "string",
-          description: "Login page to open in the DevTools Chrome before filling, e.g. https://www.galaxus.ch/login",
-        },
+        url: URL_ARG,
         to: {
           type: "string",
           description: "Authnudge email or handle. Omit when toConfigured / AUTHNUDGE_TO is set; do not ask for a handle then. Ask only if unknown and toConfigured is false.",
         },
-        cdpUrl: {
-          type: "string",
-          description: "Chrome DevTools HTTP URL. Defaults to AUTHNUDGE_CDP_URL or http://127.0.0.1:9222.",
-        },
+        cdpUrl: CDP_ARG,
       },
     },
   },
 ];
+
+const str = (value) => (typeof value === "string" ? value : undefined);
 
 let framing = null;
 let buf = Buffer.alloc(0);
@@ -91,18 +112,22 @@ async function handle(msg) {
     let result;
     try {
       if (name === "publicKey") result = await publicKeyInfo();
-      else if (name === "login") {
-        result = await loginCdp({
-          url: typeof args.url === "string" ? args.url : undefined,
-          to: typeof args.to === "string" ? args.to : undefined,
-          cdpUrl: typeof args.cdpUrl === "string" ? args.cdpUrl : undefined,
+      else if (name === "fill") {
+        result = await fillCdp({
+          url: str(args.url),
+          requestId: str(args.requestId),
+          claimToken: str(args.claimToken),
+          expiresAt: str(args.expiresAt),
+          cdpUrl: str(args.cdpUrl),
         });
+      } else if (name === "login") {
+        result = await loginCdp({ url: str(args.url), to: str(args.to), cdpUrl: str(args.cdpUrl) });
       } else return fail(id, -32601, "Unknown tool");
     } catch {
       result = { ok: false, status: "error" };
     }
     const text = JSON.stringify(result);
-    const isError = name === "login" && result && result.ok === false;
+    const isError = name !== "publicKey" && result && result.ok === false;
     return reply(id, { content: [{ type: "text", text }], isError });
   }
   return fail(id, -32601, "Method not found");
