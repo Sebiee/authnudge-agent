@@ -1,3 +1,4 @@
+import { loginFormOp } from "./fill.js";
 import { ignorePlaceholder } from "./origin.js";
 
 export function defaultCdpUrl() {
@@ -11,13 +12,12 @@ export function flattenFrameTree(node, out = []) {
   return out;
 }
 
-export function foldFillResults(results) {
-  const list = (results ?? []).filter(Boolean);
-  if (list.some((item) => item.ok)) return { ok: true };
-  if (list.some((item) => item.reason === "need_password")) return { ok: false, reason: "need_password" };
-  if (list.some((item) => item.reason === "no_form")) return { ok: false, reason: "no_form" };
-  if (list.some((item) => item.reason === "wrong_origin")) return { ok: false, reason: "wrong_origin" };
-  return { ok: false, reason: "need_password" };
+/** The frame that owns the login step: password beats code beats identifier. */
+export function pickFormFrame(hits) {
+  const rank = (v) => (v?.password ? 3 : v?.otp ? 2 : v?.identifier ? 1 : 0);
+  let best = null;
+  for (const hit of hits) if (hit.value?.ok && rank(hit.value) > rank(best?.value)) best = hit;
+  return best;
 }
 
 export function samePage(left, right) {
@@ -113,6 +113,7 @@ export async function attachCdpPage(cdpUrl, wantUrl) {
 
   const call = (method, params, sessionId) =>
     new Promise((resolve, reject) => {
+      if (ws.readyState !== WebSocket.OPEN) return reject(new Error("Chrome DevTools socket is closed."));
       const id = ++nextId;
       pending.set(id, (msg) => {
         if (msg.error) reject(new Error("Chrome DevTools call failed."));
@@ -122,6 +123,11 @@ export async function attachCdpPage(cdpUrl, wantUrl) {
       if (sessionId) payload.sessionId = sessionId;
       ws.send(JSON.stringify(payload));
     });
+  // Tab closed or Chrome quit: fail every in-flight call instead of hanging login forever.
+  ws.addEventListener("close", () => {
+    for (const finish of pending.values()) finish({ error: "closed" });
+    pending.clear();
+  });
 
   const adoptSession = async (sessionId, targetType, waitingForDebugger) => {
     if (targetType === "iframe" || targetType === "page") {
@@ -171,7 +177,7 @@ export async function attachCdpPage(cdpUrl, wantUrl) {
   const waitForAny = (methods, ms) =>
     new Promise((resolve) => {
       let done = false;
-      const finish = () => {
+      const finish = (fired) => {
         if (done) return;
         done = true;
         clearTimeout(timer);
@@ -182,21 +188,21 @@ export async function attachCdpPage(cdpUrl, wantUrl) {
           if (next.length) waiters.set(method, next);
           else waiters.delete(method);
         }
-        resolve();
+        resolve(fired);
       };
-      const onEvent = () => finish();
+      const onEvent = () => finish(true);
       for (const method of methods) {
         const queue = waiters.get(method) ?? [];
         queue.push(onEvent);
         waiters.set(method, queue);
       }
-      const timer = setTimeout(finish, ms);
+      const timer = setTimeout(() => finish(false), ms);
     });
 
-  let fillTarget = null;
+  // Frame that holds the current login step; set by the last `inspect`.
+  let target = null;
 
-  const evaluateInFrame = async (sessionId, frameId, fn, arg) => {
-    if (!frameId) return null;
+  const runInFrame = async (sessionId, frameId, arg) => {
     let contextId;
     try {
       const world = await call("Page.createIsolatedWorld", { frameId, worldName: "authnudge" }, sessionId);
@@ -208,10 +214,9 @@ export async function attachCdpPage(cdpUrl, wantUrl) {
     const result = await call(
       "Runtime.callFunctionOn",
       {
-        functionDeclaration: `async function (arg) { return (${fn.toString()})(arg); }`,
+        functionDeclaration: `function (arg) { return (${loginFormOp.toString()})(arg); }`,
         arguments: [{ value: arg }],
         executionContextId: contextId,
-        awaitPromise: true,
         returnByValue: true,
         userGesture: true,
       },
@@ -221,7 +226,7 @@ export async function attachCdpPage(cdpUrl, wantUrl) {
     return result?.result?.value ?? null;
   };
 
-  const eachFrame = async (fn, arg) => {
+  const eachFrame = async (arg) => {
     const results = [];
     const seen = new Set();
     for (const sessionId of [undefined, ...sessions]) {
@@ -236,7 +241,7 @@ export async function attachCdpPage(cdpUrl, wantUrl) {
         if (!frame.id || seen.has(frame.id)) continue;
         seen.add(frame.id);
         try {
-          const value = await evaluateInFrame(sessionId, frame.id, fn, arg);
+          const value = await runInFrame(sessionId, frame.id, arg);
           if (value != null) results.push({ sessionId, frameId: frame.id, value });
         } catch {
           /* navigation tore the context down */
@@ -248,10 +253,16 @@ export async function attachCdpPage(cdpUrl, wantUrl) {
 
   await call("Page.enable");
   await call("Runtime.enable");
-  try {
-    await call("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
-  } catch {
-    /* older chrome */
+  for (const [method, params] of [
+    ["Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }],
+    // A background window has no focus; without this, focus() sticks but Input.insertText goes nowhere.
+    ["Emulation.setFocusEmulationEnabled", { enabled: true }],
+  ]) {
+    try {
+      await call(method, params);
+    } catch {
+      /* older chrome */
+    }
   }
 
   return {
@@ -276,35 +287,28 @@ export async function attachCdpPage(cdpUrl, wantUrl) {
       await call("Page.navigate", { url });
       await loaded;
     },
+    /** Sleep up to `ms`, waking early on navigation. Resolves true when something happened. */
     async waitForUpdate(ms) {
-      await waitForAny(["Page.frameNavigated", "Page.loadEventFired", "Page.frameStoppedLoading"], ms);
+      return waitForAny(["Page.frameNavigated", "Page.loadEventFired", "Page.frameStoppedLoading"], ms);
     },
+    /** Trusted text input into the focused field, like a paste. Input goes to the page session; Chrome routes it to the focused frame. */
     async insertText(text) {
-      await call("Input.insertText", { text: String(text ?? "") }, fillTarget?.sessionId);
+      await call("Input.insertText", { text: String(text ?? "") });
     },
-    async evaluate(fn, arg) {
-      if (arg?.op === "focus" || arg?.op === "submit") {
-        if (!fillTarget) return { ok: false, reason: "need_password" };
-        return (await evaluateInFrame(fillTarget.sessionId, fillTarget.frameId, fn, arg)) ?? {
-          ok: false,
-          reason: "need_password",
-        };
+    async pressEnter() {
+      const key = { key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
+      await call("Input.dispatchKeyEvent", { type: "keyDown", text: "\r", unmodifiedText: "\r", ...key });
+      await call("Input.dispatchKeyEvent", { type: "keyUp", ...key });
+    },
+    /** `inspect` scans every frame and remembers the one with the form; `focus`/`submit` run there. */
+    async op(arg) {
+      if (arg.op === "inspect") {
+        const hit = pickFormFrame(await eachFrame(arg));
+        target = hit ? { sessionId: hit.sessionId, frameId: hit.frameId } : null;
+        return hit?.value ?? { ok: true, password: false, identifier: false, otp: false };
       }
-      const hits = await eachFrame(fn, arg);
-      if (arg?.op === "inspect") {
-        fillTarget = null;
-        const hit =
-          hits.find((item) => item.value?.ok && item.value.password) ??
-          hits.find((item) => item.value?.ok && item.value.identifier);
-        if (hit) {
-          fillTarget = { sessionId: hit.sessionId, frameId: hit.frameId };
-          return hit.value;
-        }
-        return hits[0]?.value ?? { ok: false, reason: "no_form" };
-      }
-      const ok = hits.find((item) => item.value?.ok);
-      if (ok) return ok.value;
-      return foldFillResults(hits.map((item) => item.value));
+      if (!target) return { ok: false, reason: "no_field" };
+      return (await runInFrame(target.sessionId, target.frameId, arg)) ?? { ok: false, reason: "no_field" };
     },
     close() {
       try {

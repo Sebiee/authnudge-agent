@@ -25,9 +25,9 @@ You cannot see plugin settings. Call **`publicKey`** first. That tool generates 
 
 ## Login
 
-1. Call `login` with `{ "url": "<login URL>", "to": "<handle or email>" }`. Always pass `to` unless `toConfigured` was true. Always pass `url` unless that DevTools Chrome is already on the login page.
-2. Wait. Their phone gets a push; they submit Authnudge’s grant form.
-3. `{ "ok": true }` — continue in that DevTools Chrome. `expired` / `no_form` / `error` — stop and report that status.
+1. Call `login` with `{ "url": "<login URL>", "to": "<handle or email>" }`. Always pass `to` unless `toConfigured` was true. Always pass `url` unless that DevTools Chrome is already on the login page. Do not try to guess the login page, but rather make sure you first identify it correctly.
+2. Wait. Their phone gets a push; they submit Authnudge’s grant form. If the site then asks for a one-time code, `login` asks them and fills that too. Never print the code.
+3. `{ "ok": true }` — continue in that DevTools Chrome. `expired` / `no_form` / `error` — stop and report that status. `otp` — the site wants a one-time code that Authnudge could not request; tell the user to type it in that Chrome window, never in chat.
 4. If `login` returns `status: "pairing"` with a `publicKey`, they have not saved this key yet. Show that same `publicKey` again; do not generate a new one in chat.
 
 Depending on the user's request nature, chrome might already be started with debug port 9222, or you should start it yourself with `--remote-debugging-port=9222` (or pass `cdpUrl`).

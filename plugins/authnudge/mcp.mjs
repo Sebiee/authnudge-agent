@@ -26,7 +26,7 @@ const TOOLS = [
   {
     name: "login",
     description:
-      "Create a phone-grant request and fill the login form in Chrome with remote debugging (default http://127.0.0.1:9222). Does not fill Playwright, computer-use, or other browser-automation tabs. Never returns usernames, passwords, or the requester private key. Pass `to` (Authnudge email or handle) unless AUTHNUDGE_TO is set. Pairing (saving this agent's public key) must already be done via publicKey unless AUTHNUDGE_API_KEY is set. Start Chrome with --remote-debugging-port=9222.",
+      "Create a phone-grant request and fill the login form in Chrome with remote debugging (default http://127.0.0.1:9222). Stays if they ask for a one-time code. Does not fill Playwright, computer-use, or other browser-automation tabs. Never returns usernames, passwords, codes, or the requester private key. Pass `to` (Authnudge email or handle) unless AUTHNUDGE_TO is set. Pairing (saving this agent's public key) must already be done via publicKey unless AUTHNUDGE_API_KEY is set. Start Chrome with --remote-debugging-port=9222.",
     inputSchema: {
       type: "object",
       properties: {

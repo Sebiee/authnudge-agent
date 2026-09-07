@@ -10,7 +10,7 @@ Chrome started with remote debugging, default `http://127.0.0.1:9222`:
 chrome --remote-debugging-port=9222 --user-data-dir="$HOME/.authnudge-chrome"
 ```
 
-Playwright, computer-use, and other browser-automation windows are a different Chrome. After `{ "ok": true }`, the session is in the DevTools Chrome.
+Playwright, computer-use, and other browser-automation windows are a different Chrome. After `{ "ok": true }`, the session is in the DevTools Chrome. If the site asks for a one-time code, `login` requests it on the same grant and fills it; the code never appears in the tool result.
 
 ## Included
 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { flattenFrameTree, foldFillResults, pickTab, samePage } from "./cdp.mjs";
+import { flattenFrameTree, pickFormFrame, pickTab, samePage } from "./cdp.mjs";
 
 const galaxus = { type: "page", url: "https://www.galaxus.ch/login", webSocketDebuggerUrl: "ws://g" };
 const shop = { type: "page", url: "https://www.galaxus.ch/de/s1/product/1", webSocketDebuggerUrl: "ws://s" };
@@ -25,11 +25,12 @@ assert.deepEqual(
   ["root", "child"],
 );
 
-assert.deepEqual(foldFillResults([{ reason: "no_form" }, { ok: true }]), { ok: true });
-assert.deepEqual(foldFillResults([{ reason: "no_form" }, { reason: "need_password" }]), {
-  ok: false,
-  reason: "need_password",
-});
-assert.deepEqual(foldFillResults([]), { ok: false, reason: "need_password" });
+const ad = { frameId: "ad", value: { ok: false, reason: "wrong_origin" } };
+const footer = { frameId: "footer", value: { ok: true, identifier: true } };
+const form = { frameId: "form", value: { ok: true, password: true, identifier: true } };
+assert.equal(pickFormFrame([ad, footer, form]), form);
+assert.equal(pickFormFrame([ad, footer]), footer);
+assert.equal(pickFormFrame([ad, { frameId: "x", value: { ok: true } }]), null);
+assert.equal(pickFormFrame([]), null);
 
 console.log("authnudge cdp check ok");

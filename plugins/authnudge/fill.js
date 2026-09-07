@@ -1,219 +1,163 @@
-// Self-contained: chrome.scripting.executeScript serializes this function.
-// Return status only — never field values.
-// Hosts inject this per frame (extension allFrames / CDP frame tree). Cross-host iframes stay isolated.
-export async function fillLoginForm(identifier, secret, expectedOrigin, waitMs = 15000) {
-  // page.evaluate-style hosts only pass one argument.
-  let op;
-  let kind;
-  if (identifier !== null && typeof identifier === "object" && !Array.isArray(identifier)) {
-    ({ identifier, secret, expectedOrigin, waitMs = 15000, op, kind } = identifier);
-  }
-  const hostOf = (tabUrl) => {
-    let url;
+// Runs inside the page (one isolated world per frame). Never receives or returns field values:
+// the host types with Chrome's Input.insertText, this only finds, focuses, and submits.
+export function loginFormOp({ op, kind, index = 0, expectedOrigin }) {
+  const hostOf = (value) => {
     try {
-      url = new URL(tabUrl);
+      const url = new URL(value);
+      if ((url.protocol !== "https:" && url.protocol !== "http:") || !url.hostname) return null;
+      return `${url.protocol}//${url.host.toLowerCase()}`;
     } catch {
       return null;
     }
-    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-    if (!url.hostname) return null;
-    return `${url.protocol}//${url.host.toLowerCase()}`;
   };
-  const sameHost = () => {
-    if (!expectedOrigin) return true;
-    const right = hostOf(expectedOrigin);
-    if (!right) return true;
-    if (hostOf(location.href) === right) return true;
+  const want = hostOf(expectedOrigin);
+  if (want && hostOf(location.href) !== want) {
+    let top = null;
     try {
-      return hostOf(window.top.location.href) === right;
+      top = hostOf(window.top.location.href);
     } catch {
-      return false;
+      /* cross-origin frame */
     }
-  };
-
-  if (!sameHost()) return { ok: false, reason: "wrong_origin" };
+    if (top !== want) return { ok: false, reason: "wrong_origin" };
+  }
 
   const visible = (el) => {
-    if (!el || el.disabled) return false;
-    if (el.type === "hidden") return false;
-    if (el.getAttribute("aria-hidden") === "true") return false;
+    if (!el || el.disabled || el.readOnly || el.type === "hidden" || el.getAttribute("aria-hidden") === "true") return false;
     const style = getComputedStyle(el);
     if (style.display === "none" || style.visibility === "hidden") return false;
     const rect = el.getBoundingClientRect();
     return rect.width >= 2 && rect.height >= 2;
   };
-
-  const write = (el, value) => {
-    el.focus();
-    const tracker = el._valueTracker;
-    if (tracker && typeof tracker.setValue === "function") tracker.setValue("");
-    const desc = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value");
-    if (desc?.set) desc.set.call(el, value);
-    else el.value = value;
-    try {
-      el.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertFromPaste", data: value }));
-    } catch {
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-    }
-    el.dispatchEvent(new Event("change", { bubbles: true }));
-  };
-
   const hint = (el) =>
     `${el.autocomplete || ""} ${el.name || ""} ${el.id || ""} ${el.placeholder || ""} ${el.getAttribute("inputmode") || ""}`.toLowerCase();
+  const inputs = () => [...document.querySelectorAll("input")].filter(visible);
+  const NOT_TEXT = ["password", "hidden", "submit", "button", "checkbox", "radio", "file", "reset", "image", "search"];
+
+  const looksLikeOtp = (el) => {
+    const type = (el.type || "text").toLowerCase();
+    const text = hint(el);
+    const max = Number(el.maxLength);
+    const numeric = (el.getAttribute("inputmode") || "").toLowerCase() === "numeric" || type === "tel";
+    if ((el.autocomplete || "").toLowerCase() === "one-time-code") return true;
+    if (numeric && ((max >= 4 && max <= 8) || max === 1)) return true;
+    if (/(^|[^a-z])(otp|totp|2fa|mfa)([^a-z]|$)/.test(text)) return true;
+    return /(verification code|one[- ]time|security code|login code|auth code)/.test(text);
+  };
+  // One code field, or 4–8 single-character boxes.
+  const otpBoxes = () => {
+    const list = inputs().filter((el) => !NOT_TEXT.includes((el.type || "text").toLowerCase()) && looksLikeOtp(el));
+    if (list.length === 1) return list;
+    if (list.length >= 4 && list.length <= 8 && list.every((el) => Number(el.maxLength) === 1)) return list;
+    return [];
+  };
+
+  const passwords = () => inputs().filter((el) => el.type === "password" && !hint(el).includes("new-password"));
 
   const scoreIdentifier = (el) => {
     const type = (el.type || "text").toLowerCase();
     const text = hint(el);
-    if (type === "email" || text.includes("email")) return 4;
+    const auto = (el.autocomplete || "").toLowerCase();
+    if (auto === "username" || auto === "email") return 5;
+    if (type === "email" || text.includes("email") || text.includes("e-mail")) return 4;
     if (text.includes("username") || text.includes("user")) return 3;
     if (/(^|[^a-z])(login|identifier|acct|account)([^a-z]|$)/.test(text)) return 2;
     return 1;
   };
-
-  const identifiers = () =>
-    [...document.querySelectorAll("input")].filter((el) => {
-      if (!visible(el)) return false;
-      const type = (el.type || "text").toLowerCase();
-      if (["password", "hidden", "submit", "button", "checkbox", "radio", "file", "reset", "image", "search"].includes(type)) {
-        return false;
-      }
-      const text = hint(el);
-      if (text.includes("search") || text.includes("suche") || text.includes("recherch")) return false;
-      return ["email", "text", "tel", "url"].includes(type);
-    });
-
-  const passwords = () =>
-    [...document.querySelectorAll("input[type=password]")].filter((el) => {
-      if (!visible(el)) return false;
-      return !hint(el).includes("new-password");
-    });
-
   const pickIdentifier = (scope, passwordEl) => {
-    const nodes = identifiers().filter((el) => (!scope || scope.contains(el)) && el !== passwordEl);
+    const nodes = inputs().filter((el) => {
+      const type = (el.type || "text").toLowerCase();
+      if (NOT_TEXT.includes(type) || !["email", "text", "tel", "url"].includes(type)) return false;
+      if (el === passwordEl || !scope.contains(el) || looksLikeOtp(el)) return false;
+      return !/search|suche|recherch/.test(hint(el));
+    });
     if (!nodes.length) return null;
-    const before = passwordEl
-      ? nodes.filter((el) => passwordEl.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_PRECEDING)
-      : nodes;
+    const before = passwordEl ? nodes.filter((el) => passwordEl.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_PRECEDING) : nodes;
     const pool = before.length ? before : nodes;
     let best = pool[0];
-    for (const el of pool) {
-      if (scoreIdentifier(el) >= scoreIdentifier(best)) best = el;
-    }
+    for (const el of pool) if (scoreIdentifier(el) > scoreIdentifier(best)) best = el;
     return best;
   };
 
-  const wipePassword = (el) => {
-    const desc = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value");
-    if (desc?.set) desc.set.call(el, "");
-    else el.value = "";
+  const field = (which) => {
+    if (which === "otp") return otpBoxes()[index] ?? null;
+    const pwd = passwords();
+    const passwordEl = pwd.length === 1 ? pwd[0] : null;
+    if (which === "password") return passwordEl;
+    return pickIdentifier(passwordEl?.form ?? document, passwordEl);
   };
 
-  const submitForm = (form) => {
+  const controls = (root) =>
+    [...root.querySelectorAll("button, input[type=submit], input[type=button], [role=button]")].filter((el) => visible(el));
+  const label = (el) => (el.textContent || el.value || el.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim();
+  const looksLikeSubmit = (el) => {
+    const text = label(el);
+    if (!text || text.length > 48) return false;
+    if (/google|apple|facebook|microsoft|github|passkey|forgot|vergessen|oubli|register|registr|sign\s*up/i.test(text)) return false;
+    return /continue|next|log\s*in|sign\s*in|submit|verify|confirm|anmelden|weiter|best[äa]tigen|se connecter|connexion|continuer|accedi|avanti|entrar|siguiente/i.test(
+      text,
+    );
+  };
+  // Browser order first: the form's default button is what Enter would press.
+  const findSubmit = (el) => {
+    const form = el.form ?? el.closest("form");
     if (form) {
-      const submit =
-        form.querySelector("button[type=submit], input[type=submit]") || form.querySelector("button:not([type])");
-      if (submit && visible(submit) && !submit.disabled) {
-        submit.click();
-        return true;
-      }
-      if (typeof form.requestSubmit === "function") {
-        form.requestSubmit();
-        return true;
-      }
-    }
-    const next = [...document.querySelectorAll("button, input[type=submit], [role=button]")].find((el) => {
-      if (!visible(el) || el.disabled) return false;
-      return /^(continue|next|log\s*in|sign\s*in|submit|anmelden|weiter|se connecter|connexion|continuer|accedi|avanti)$/i.test(
-        (el.textContent || el.value || "").trim(),
+      const list = controls(form);
+      return (
+        list.find((b) => b.matches("button[type=submit], input[type=submit]")) ??
+        list.find((b) => b.matches("button:not([type])")) ??
+        list.find(looksLikeSubmit) ??
+        (list.length === 1 ? list[0] : null)
       );
-    });
-    if (next) {
-      next.click();
-      return true;
     }
-    return false;
-  };
-
-  const submitThenWipe = async (form, passwordEl) => {
-    const formEl = form || passwordEl.form;
-    submitForm(formEl);
-    // ponytail: give the page a macrotask to read the field; queueMicrotask wiped before Galaxus's submit handler.
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    wipePassword(passwordEl);
-  };
-
-  const focusField = (which) => {
-    const passwordEl = passwords()[0];
-    const el = which === "password" ? passwordEl : pickIdentifier(passwordEl?.form ?? document, passwordEl ?? null);
-    if (!el) return { ok: false, reason: which === "password" ? "need_password" : "no_form" };
-    el.focus();
-    if (typeof el.select === "function") el.select();
-    return { ok: true };
+    // Form-less (div) forms: nearest ancestor that holds a submit-looking control.
+    let root = el;
+    for (let i = 0; i < 8 && root.parentElement && root !== document.body; i++) {
+      root = root.parentElement;
+      const hit = controls(root).find(looksLikeSubmit);
+      if (hit) return hit;
+    }
+    return null;
   };
 
   if (op === "inspect") {
-    if (!sameHost()) return { ok: false, reason: "wrong_origin" };
     const pwd = passwords();
-    if (pwd.length > 1) return { ok: false, reason: "no_form" };
+    const passwordEl = pwd.length === 1 ? pwd[0] : null;
+    const identifierEl = pickIdentifier(passwordEl?.form ?? document, passwordEl);
+    const otp = otpBoxes();
     return {
       ok: true,
-      password: pwd.length === 1,
-      identifier: Boolean(pickIdentifier(pwd[0]?.form ?? document, pwd[0] ?? null)),
+      password: Boolean(passwordEl),
+      passwordFilled: Boolean(passwordEl?.value),
+      identifier: Boolean(identifierEl),
+      identifierFilled: Boolean(identifierEl?.value),
+      otp: otp.length > 0,
+      otpBoxes: otp.length,
+      otpFilled: otp.length > 0 && otp.every((el) => el.value),
     };
   }
+  const el = field(kind);
+  if (!el) return { ok: false, reason: "no_field" };
   if (op === "focus") {
-    if (!sameHost()) return { ok: false, reason: "wrong_origin" };
-    return focusField(kind);
+    el.focus();
+    try {
+      el.select();
+    } catch {
+      /* not selectable */
+    }
+    return { ok: document.activeElement === el };
   }
   if (op === "submit") {
-    if (!sameHost()) return { ok: false, reason: "wrong_origin" };
-    const passwordEl = passwords()[0];
-    const userEl = pickIdentifier(passwordEl?.form ?? document, passwordEl ?? null);
-    return { ok: submitForm(passwordEl?.form || userEl?.form) };
+    const button = findSubmit(el);
+    if (button) {
+      button.click();
+      return { ok: true, how: "click" };
+    }
+    const form = el.form ?? el.closest("form");
+    if (form && typeof form.requestSubmit === "function") {
+      form.requestSubmit();
+      return { ok: true, how: "requestSubmit" };
+    }
+    return { ok: false, reason: "no_button" };
   }
-
-  const waitForPassword = (ms) =>
-    new Promise((resolve) => {
-      const finish = (value) => {
-        observer.disconnect();
-        clearTimeout(timer);
-        resolve(value);
-      };
-      const check = () => {
-        if (!sameHost()) return finish(null);
-        const found = passwords();
-        if (found.length === 1) return finish(found[0]);
-        if (found.length > 1) return finish(null);
-      };
-      const observer = new MutationObserver(check);
-      observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
-      const timer = setTimeout(() => finish(passwords().length === 1 ? passwords()[0] : null), ms);
-      check();
-    });
-
-  const pwdFields = passwords();
-  if (pwdFields.length > 1) return { ok: false, reason: "no_form" };
-
-  if (pwdFields.length === 1) {
-    const passwordEl = pwdFields[0];
-    const userEl = pickIdentifier(passwordEl.form ?? document, passwordEl);
-    if (userEl) write(userEl, identifier);
-    write(passwordEl, secret);
-    await submitThenWipe(passwordEl.form, passwordEl);
-    return { ok: true };
-  }
-
-  const userEl = pickIdentifier(document, null);
-  if (!userEl) return { ok: false, reason: "no_form" };
-
-  write(userEl, identifier);
-  submitForm(userEl.form);
-
-  const passwordEl = await waitForPassword(waitMs);
-  if (!sameHost()) return { ok: false, reason: "wrong_origin" };
-  if (!passwordEl) return { ok: false, reason: "need_password" };
-
-  write(passwordEl, secret);
-  await submitThenWipe(passwordEl.form, passwordEl);
-  return { ok: true };
+  return { ok: false, reason: "bad_op" };
 }

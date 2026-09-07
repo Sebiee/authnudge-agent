@@ -3,25 +3,18 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { attachCdpPage } from "./cdp.mjs";
 import { decryptEnvelope, generateRequesterKeys, requesterFingerprint, signRequest } from "./e2e.js";
-import { fillLoginForm } from "./fill.js";
 import { ignorePlaceholder, normalizeBaseUrl, normalizeOrigin, normalizeTo, sameLoginHost } from "./origin.js";
 
-const DEFAULT_BASE = "https://authnudge.com";
+// const DEFAULT_BASE = "https://authnudge.com";
+const DEFAULT_BASE = "http://localhost:5173";
+
+const FORM_MS = 45_000; // SPA may still be rendering the login form
+const SETTLE_MS = 6_000; // after one submit, how long the step gets to go away
+const OTP_QUIET_MS = 8_000; // after the password step: no code prompt within this much page quiet = done
+const OTP_WATCH_MS = 20_000; // hard cap on that watch
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function pageUrl(page) {
-  const value = typeof page?.url === "function" ? page.url() : page?.url;
-  return String((await value) ?? "");
-}
-
-function toWsUrl(baseUrl, path, claimToken) {
-  const url = new URL(path, baseUrl);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.searchParams.set("claim", claimToken);
-  return url.toString();
 }
 
 function readApiKey(options) {
@@ -74,165 +67,183 @@ export async function createCredentialRequest({ baseUrl, to, origin, apiKey, pub
   if (apiKey) headers.authorization = `Bearer ${apiKey}`;
   const body = { to, origin, requesterPublicKey: publicKey };
   if (signature) body.signature = signature;
-  const res = await fetch(`${baseUrl}/api/v1/requests`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
+  const res = await fetch(`${baseUrl}/api/v1/requests`, { method: "POST", headers, body: JSON.stringify(body) });
   const payload = await res.json().catch(() => ({}));
   return { status: res.status, body: payload };
 }
 
-export async function waitForEnvelope({ baseUrl, requestId, claimToken, expiresAt, signal }) {
-  const poll = async () => {
-    const res = await fetch(`${baseUrl}/api/v1/requests/${requestId}`, {
-      headers: { authorization: `Bearer ${claimToken}` },
+export async function askOtp({ baseUrl, requestId, claimToken }) {
+  try {
+    const res = await fetch(`${baseUrl}/api/v1/requests/${requestId}/continue`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${claimToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ type: "otp" }),
     });
-    if (!res.ok) return null;
-    return res.json();
-  };
-
-  return new Promise((resolve) => {
-    let socket = null;
-    let settled = false;
-    const finish = (result) => {
-      if (settled) return;
-      settled = true;
-      clearInterval(timer);
-      try {
-        socket?.close();
-      } catch {
-        /* ignore */
-      }
-      signal?.removeEventListener("abort", onAbort);
-      resolve(result);
-    };
-    const onAbort = () => finish({ status: "error", code: "aborted" });
-    const consider = (data) => {
-      if (data?.status === "fulfilled" || data?.type === "fulfilled") {
-        finish({ status: "fulfilled", envelope: data.envelope ?? null });
-      }
-      if (data?.status === "expired" || data?.type === "expired") finish({ status: "expired" });
-    };
-    const connect = () => {
-      if (settled || typeof WebSocket !== "function") return;
-      if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
-      try {
-        socket = new WebSocket(toWsUrl(baseUrl, `/api/v1/requests/${requestId}/ws`, claimToken));
-      } catch {
-        return;
-      }
-      socket.addEventListener("message", (event) => {
-        if (event.data === "pong") return;
-        try {
-          consider(JSON.parse(event.data));
-        } catch {
-          /* ignore */
-        }
-      });
-      socket.addEventListener("close", () => {
-        socket = null;
-      });
-    };
-    const tick = async () => {
-      if (Date.now() >= expiresAt) return finish({ status: "expired" });
-      try {
-        consider(await poll());
-      } catch {
-        /* still waiting */
-      }
-      if (socket?.readyState === WebSocket.OPEN) socket.send("ping");
-      else connect();
-    };
-
-    signal?.addEventListener("abort", onAbort, { once: true });
-    if (signal?.aborted) return onAbort();
-    connect();
-    void tick();
-    const timer = setInterval(() => void tick(), 2000);
-  });
+    return res.ok || res.status === 409;
+  } catch {
+    return false;
+  }
 }
 
-async function waitRetry(page, deadline) {
-  const leftover = Math.min(2000, Math.max(0, deadline - Date.now()));
-  if (typeof page.waitForUpdate === "function") return page.waitForUpdate(leftover);
-  return sleep(leftover);
-}
-
-async function formOp(page, op, extra = {}) {
-  return page.evaluate(fillLoginForm, { op, expectedOrigin: extra.origin, kind: extra.kind });
-}
-
-async function typeField(page, kind, origin, value) {
-  const focused = await formOp(page, "focus", { origin, kind });
-  if (!focused?.ok) return focused;
-  await page.insertText(value);
-  return { ok: true };
-}
-
-async function fillByTyping(page, origin, identifier, secret) {
-  const deadline = Date.now() + 45_000;
-  let sentIdentifier = false;
-  while (Date.now() < deadline) {
-    if (!sameLoginHost(await pageUrl(page), origin)) return { ok: false, status: "page_changed" };
-    let snap;
+/** Poll until the relay hands over a new envelope, is fulfilled, or expires. GET takes the envelope, so each shows up once. */
+export async function waitForEnvelope({ baseUrl, requestId, claimToken, expiresAt, signal, lastCiphertext = "" }) {
+  while (Date.now() < expiresAt) {
+    if (signal?.aborted) return { status: "error", code: "aborted" };
     try {
-      snap = await formOp(page, "inspect", { origin });
-    } catch {
-      snap = { ok: false, reason: "need_password" };
-    }
-    if (snap?.reason === "wrong_origin") return { ok: false, status: "page_changed" };
-
-    if (snap?.password) {
-      if (snap.identifier) {
-        const filled = await typeField(page, "identifier", origin, identifier);
-        if (!filled?.ok) {
-          await waitRetry(page, deadline);
-          continue;
+      const res = await fetch(`${baseUrl}/api/v1/requests/${requestId}`, { headers: { authorization: `Bearer ${claimToken}` } });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.envelope && data.envelope.ciphertext !== lastCiphertext) {
+          return { status: "holding", envelope: data.envelope, envelopeKind: data.envelopeKind || "password" };
         }
+        if (data.status === "fulfilled") return { status: "fulfilled" };
+        if (data.status === "expired") return { status: "expired" };
       }
-      const filled = await typeField(page, "password", origin, secret);
-      if (!filled?.ok) {
-        await waitRetry(page, deadline);
+    } catch {
+      /* still waiting */
+    }
+    await sleep(2000);
+  }
+  return { status: "expired" };
+}
+
+// --- Form driving. Secrets only ever go through page.insertText (Chrome's own text input). ---
+
+/** What the login page shows right now. `gone` = the tab left the login host. */
+async function state(page, origin) {
+  if (!sameLoginHost(await page.url(), origin)) return { gone: true };
+  try {
+    const snap = await page.op({ op: "inspect", expectedOrigin: origin });
+    return snap?.ok ? snap : {};
+  } catch {
+    return {}; // mid-navigation
+  }
+}
+
+/** Focus + select the field, then type over it. */
+async function type(page, origin, kind, text, index = 0) {
+  const focused = await page.op({ op: "focus", kind, index, expectedOrigin: origin });
+  if (!focused?.ok) return false;
+  await page.insertText(text);
+  return true;
+}
+
+/** Typed text actually landed (field non-empty). Never submit on a blind type. */
+async function filled(page, origin, kind) {
+  return Boolean((await state(page, origin))[`${kind}Filled`]);
+}
+
+/**
+ * Submit the step that owns `kind` and wait until `done(state)` says it is over.
+ * Click the form's submit button first (goes through overlays); if the step is still there, Enter in the field.
+ * Two attempts max: a rejected password must not turn into a lockout.
+ */
+async function submitStep(page, origin, kind, done) {
+  for (const how of ["click", "enter"]) {
+    if (done(await state(page, origin))) return true;
+    if (how === "click") {
+      const clicked = await page.op({ op: "submit", kind, expectedOrigin: origin });
+      if (!clicked?.ok) continue;
+    } else {
+      const focused = await page.op({ op: "focus", kind, expectedOrigin: origin });
+      if (!focused?.ok) continue;
+      await page.pressEnter();
+    }
+    const until = Date.now() + SETTLE_MS;
+    while (Date.now() < until) {
+      await page.waitForUpdate(500);
+      if (done(await state(page, origin))) return true;
+    }
+  }
+  return done(await state(page, origin));
+}
+
+const passwordStepOver = (s) => s.gone || !s.password;
+const identifierStepOver = (s) => s.gone || s.password || s.otp || !s.identifier;
+
+async function fillCredentials(page, origin, identifier, secret) {
+  const deadline = Date.now() + FORM_MS;
+  let identifierSentAt = 0;
+  while (Date.now() < deadline) {
+    const s = await state(page, origin);
+    if (s.gone) return { ok: false, status: "page_changed" };
+    if (s.password) {
+      // Two-step sites keep the (pre-filled) email on the password step: leave it alone unless empty.
+      if (s.identifier && !s.identifierFilled) await type(page, origin, "identifier", identifier);
+      if (!(await type(page, origin, "password", secret)) || !(await filled(page, origin, "password"))) {
+        await page.waitForUpdate(500);
         continue;
       }
-      await formOp(page, "submit", { origin });
-      return { ok: true };
+      if (await submitStep(page, origin, "password", passwordStepOver)) return { ok: true };
+      return { ok: false, status: "error", message: "The password was submitted but the site stayed on the password step." };
     }
-
-    if (snap?.identifier && !sentIdentifier) {
-      const filled = await typeField(page, "identifier", origin, identifier);
-      if (filled?.ok) {
-        await formOp(page, "submit", { origin });
-        sentIdentifier = true;
+    if (s.identifier && Date.now() - identifierSentAt > 8_000) {
+      if ((await type(page, origin, "identifier", identifier)) && (await filled(page, origin, "identifier"))) {
+        identifierSentAt = Date.now();
+        await submitStep(page, origin, "identifier", identifierStepOver);
+        continue;
       }
     }
-    await waitRetry(page, deadline);
+    await page.waitForUpdate(700);
   }
-  if (!sameLoginHost(await pageUrl(page), origin)) return { ok: false, status: "page_changed" };
   return { ok: false, status: "no_form" };
 }
 
-async function fillPage(page, origin, identifier, secret) {
-  if (typeof page.insertText === "function") return fillByTyping(page, origin, identifier, secret);
-
-  const deadline = Date.now() + 45_000;
-  let waitMs = 15_000;
-  while (Date.now() < deadline) {
-    if (!sameLoginHost(await pageUrl(page), origin)) return { ok: false, status: "page_changed" };
-    let result;
-    try {
-      result = await page.evaluate(fillLoginForm, { identifier, secret, expectedOrigin: origin, waitMs });
-    } catch {
-      result = { ok: false, reason: "need_password" };
-    }
-    if (result?.ok) return { ok: true };
-    if (result?.reason === "wrong_origin") return { ok: false, status: "page_changed" };
-    waitMs = 4_000;
-    await waitRetry(page, deadline);
+async function fillOtp(page, origin, code) {
+  const s = await state(page, origin);
+  if (s.gone) return { ok: false, status: "page_changed" };
+  if (!s.otp) return { ok: false, status: "no_form" };
+  // Single-char boxes get one digit each (maxlength=1 truncates a paste); many auto-submit on the last one.
+  for (let i = 0; i < (s.otpBoxes > 1 ? Math.min(code.length, s.otpBoxes) : 1); i++) {
+    if (!(await type(page, origin, "otp", s.otpBoxes > 1 ? code[i] : code, i))) return { ok: false, status: "no_form" };
   }
-  if (!sameLoginHost(await pageUrl(page), origin)) return { ok: false, status: "page_changed" };
-  return { ok: false, status: "no_form" };
+  const after = await state(page, origin);
+  if (after.otp && !after.otpFilled) return { ok: false, status: "no_form" };
+  if (await submitStep(page, origin, "otp", (n) => n.gone || !n.otp)) return { ok: true };
+  return { ok: false, status: "error", message: "The code was submitted but the site stayed on the code step." };
+}
+
+async function useDelivery(page, origin, keys, requestId, envelope, kind) {
+  const step = kind === "otp" ? "otp" : undefined;
+  let payload;
+  try {
+    payload = await decryptEnvelope(keys.privateKey, envelope, { requestId, requesterPublicKey: keys.publicKey, step });
+  } catch {
+    return { ok: false, status: "error" };
+  }
+  if (payload?.origin !== origin) return { ok: false, status: "error" };
+  if (step === "otp") {
+    const code = typeof payload.otp === "string" ? payload.otp.trim() : "";
+    payload = null;
+    return code ? fillOtp(page, origin, code) : { ok: false, status: "error" };
+  }
+  const { username, password } = payload;
+  payload = null;
+  if (typeof username !== "string" || typeof password !== "string") return { ok: false, status: "error" };
+  return fillCredentials(page, origin, username, password);
+}
+
+/** Password is in. Watch briefly for a one-time-code prompt; if one shows, ask the phone for it and fill that too. */
+async function afterPassword(page, origin, keys, relay, lastCiphertext) {
+  for (let round = 0; round < 2; round++) {
+    const cap = Date.now() + OTP_WATCH_MS;
+    let quietUntil = Date.now() + OTP_QUIET_MS;
+    let s;
+    do {
+      if (await page.waitForUpdate(700)) quietUntil = Date.now() + OTP_QUIET_MS; // still navigating
+      s = await state(page, origin);
+    } while (!s.otp && !s.gone && Date.now() < Math.min(cap, quietUntil));
+    if (!s.otp) return { ok: true };
+    if (!(await askOtp(relay))) {
+      return { ok: false, status: "otp", message: "The site asks for a one-time code. Enter it in that Chrome window." };
+    }
+    const ev = await waitForEnvelope({ ...relay, lastCiphertext });
+    if (!ev.envelope) return { ok: false, status: ev.status === "expired" ? "expired" : "error" };
+    lastCiphertext = ev.envelope.ciphertext;
+    const filled = await useDelivery(page, origin, keys, relay.requestId, ev.envelope, "otp");
+    if (!filled.ok) return filled;
+  }
+  return { ok: true };
 }
 
 /** Fill `page` after the account holder grants on their phone. Never returns usernames or passwords. */
@@ -249,14 +260,8 @@ export async function login(page, options = {}) {
   } catch {
     return { ok: false, status: "error", message: "AUTHNUDGE_URL must be http or https." };
   }
-  const origin = normalizeOrigin(options.origin ?? (await pageUrl(page)));
-  if (!to) {
-    return {
-      ok: false,
-      status: "error",
-      message: "Pass to as your Authnudge email or handle (ask the user if unknown).",
-    };
-  }
+  const origin = normalizeOrigin(options.origin ?? (await page.url()));
+  if (!to) return { ok: false, status: "error", message: "Pass to as your Authnudge email or handle (ask the user if unknown)." };
   if (!origin) return { ok: false, status: "error", message: "The page URL is not a login origin." };
 
   const keys = namedKey ? await generateRequesterKeys() : await loadPersistentKeys();
@@ -282,44 +287,23 @@ export async function login(page, options = {}) {
       message: "Save this public key at authnudge.com → Access → Public keys, then retry.",
     };
   }
-  if (created.status === 401) {
-    return { ok: false, status: "error", message: "API key was rejected. It must belong to the account in `to`." };
-  }
+  if (created.status === 401) return { ok: false, status: "error", message: "API key was rejected. It must belong to the account in `to`." };
   if (created.status === 429) return { ok: false, status: "error", message: "Inbox is full. Try again shortly." };
   if (created.status !== 201) return { ok: false, status: "error", message: "Could not create a credential request." };
 
-  const expiresAt = Date.parse(created.body.expiresAt) || Date.now() + 5 * 60 * 1000;
-  const waited = await waitForEnvelope({
+  const relay = {
     baseUrl,
     requestId: created.body.requestId,
     claimToken: created.body.claimToken,
-    expiresAt,
+    expiresAt: Date.parse(created.body.expiresAt) || Date.now() + 5 * 60 * 1000,
     signal: options.signal,
-  });
-  if (waited.status !== "fulfilled" || !waited.envelope) {
-    return { ok: false, status: waited.status === "expired" ? "expired" : "error" };
-  }
+  };
+  const waited = await waitForEnvelope(relay);
+  if (!waited.envelope) return { ok: false, status: waited.status === "expired" ? "expired" : "error" };
 
-  let payload;
-  try {
-    payload = await decryptEnvelope(keys.privateKey, waited.envelope, {
-      requestId: created.body.requestId,
-      requesterPublicKey: keys.publicKey,
-    });
-  } catch {
-    return { ok: false, status: "error" };
-  }
-  if (payload?.origin !== origin) return { ok: false, status: "error" };
-  const identifier = payload?.username;
-  const secret = payload?.password;
-  payload = null;
-  if (typeof identifier !== "string" || typeof secret !== "string") return { ok: false, status: "error" };
-
-  try {
-    return await fillPage(page, origin, identifier, secret);
-  } finally {
-    waited.envelope = null;
-  }
+  const first = await useDelivery(page, origin, keys, relay.requestId, waited.envelope, waited.envelopeKind);
+  if (!first.ok) return first;
+  return afterPassword(page, origin, keys, relay, waited.envelope.ciphertext);
 }
 
 /** Same as `login`, but the page is a tab in Chrome with remote debugging (default port 9222), not another agent's browser. */
