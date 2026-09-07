@@ -5,8 +5,7 @@ import { attachCdpPage } from "./cdp.mjs";
 import { decryptEnvelope, generateRequesterKeys, requesterFingerprint, signRequest } from "./e2e.js";
 import { ignorePlaceholder, normalizeBaseUrl, normalizeOrigin, normalizeTo, sameLoginHost } from "./origin.js";
 
-// const DEFAULT_BASE = "https://authnudge.com";
-const DEFAULT_BASE = "http://localhost:5173";
+const DEFAULT_BASE = "https://authnudge.com";
 
 /** Wall-clock budgets (ms). Exported so checks can shrink them; not a config surface. */
 export const timing = {
