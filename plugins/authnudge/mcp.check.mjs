@@ -34,27 +34,34 @@ assert.ok(skill.indexOf("## Preferred: OAuth") < skill.indexOf("## Fallback"));
 assert.match(skill, /Call local \*\*`publicKey`\*\*/);
 assert.match(skill, /"requesterPublicKey"/);
 assert.match(skill, /Call local \*\*`fill`\*\*/);
-assert.match(skill, /Never print, copy, or ask for the private key/);
+assert.match(skill, /Never ask for, type, or print a username, password, code, or the private key/);
 assert.match(skill, /host question tool/);
-assert.match(skill, /If \*\*both\*\* are true: call local `login`/);
-assert.match(rule, /`login` with `origin` \+ `requesterPublicKey`, then local `fill`/);
+assert.match(skill, /Both true → local `login`/);
+assert.match(rule, /follow the \*\*authnudge-login\*\* skill/);
 assert.match(skill, /call `fill` again with the exact same arguments/);
-assert.match(skill, /One `login` call = one push/);
-assert.match(rule, /Never call the remote `login` twice/);
+assert.match(skill, /One call = one push/);
+assert.match(rule, /One remote `login` per site = one push/);
+assert.match(rule, /never guess one/);
+assert.ok(rule.split("\n").length <= 12, "the rule rides in every prompt: when + nevers only, the how lives in the skill");
+// Bots guessed login URLs (/login 404, /ap/signin) and burned a push each time. The recipe must forbid guessing before it mentions `login`.
+assert.ok(skill.indexOf("**Never guess a URL.**") < skill.indexOf("Call remote **`login`**"));
+assert.ok(skill.split("\n").length <= 45, "skill must stay a short recipe; long prose gets skimmed");
 // Grok bot read "not a computer-use window" as "use a separate hidden Chrome" and logged in a browser it never used.
 for (const text of [skill, rule]) {
   assert.match(text, /computer-use, Playwright/i, "browsing yourself is allowed; only the credential step is Authnudge's");
   assert.match(text, /--remote-debugging-port=/);
   assert.match(text, /Do \*\*not\*\* start a second|Do not start a separate/);
+  assert.match(text, /cdpUrl/);
   assert.doesNotMatch(text, /stay logged out|not a Playwright or computer-use window/);
 }
 assert.doesNotMatch(skill.split("\n")[2], /computer-use, screen control/, "skill must not trigger on plain computer-use");
-assert.match(skill, /`fulfilled`: this request was already used/);
+assert.match(skill, /\| `fulfilled` \| This request was already used/);
 // Shared box: the bot filled another agent's Chrome on the default port, then reattached to that zombie job.
-assert.match(skill, /Find your Chrome's DevTools address before the first `login`/);
+assert.match(skill, /1\. \*\*Your Chrome's DevTools port\.\*\*/);
+assert.match(skill, /Pass `cdpUrl` on every call/);
 assert.match(skill, /Every result echoes `cdpUrl`/);
-assert.match(skill, /nothing to "refresh"/);
-assert.match(rule, /Find your own Chrome's DevTools port first/);
+assert.match(skill, /`claimToken` needs no refresh/);
+assert.match(rule, /know your own Chrome's DevTools port/);
 assert.match(plugin.variables.properties.AUTHNUDGE_TO.description, /fallback/i);
 assert.match(plugin.variables.properties.AUTHNUDGE_API_KEY.description, /fallback/i);
 
