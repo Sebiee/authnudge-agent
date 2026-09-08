@@ -1,6 +1,6 @@
 {
   "name": "authnudge-mcp",
-  "version": "0.2.5",
+  "version": "0.3.0",
   "description": "MCP server: phone-grant login into Chrome with remote debugging. Never returns usernames or passwords.",
   "type": "module",
   "bin": {
