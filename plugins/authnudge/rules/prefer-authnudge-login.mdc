@@ -7,5 +7,5 @@ alwaysApply: true
 
 - Browsing yourself is fine (computer-use, Playwright, tabs, clicks). When a site needs a login, follow the **authnudge-login** skill for that step only.
 - Never ask for, type, or print a username, password, or one-time code. Never hand the screen to the user to log in.
-- Before the first Authnudge call: know your own Chrome's DevTools port (`--remote-debugging-port=<port>`, pass it as `cdpUrl`; on a shared machine the default may be another agent's browser) and the real login URL (open the site, click Sign in, copy that URL; never guess one). Do not start a separate "Authnudge Chrome".
+- Do not call Authnudge `login` until a password field is on screen: know your own Chrome's DevTools port (`--remote-debugging-port=<port>`, pass it as `cdpUrl`); click Sign in, copy that URL, never guess one. Do not start a separate "Authnudge Chrome".
 - One remote `login` per site = one push to their phone. `status: "waiting"` means call the same tool again with the same arguments, nothing else.

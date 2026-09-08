@@ -42,6 +42,7 @@ assert.match(skill, /call `fill` again with the exact same arguments/);
 assert.match(skill, /One call = one push/);
 assert.match(rule, /One remote `login` per site = one push/);
 assert.match(rule, /never guess one/);
+assert.match(rule, /Do not call Authnudge `login` until a password field is on screen/);
 assert.ok(rule.split("\n").length <= 12, "the rule rides in every prompt: when + nevers only, the how lives in the skill");
 // Bots guessed login URLs (/login 404, /ap/signin) and burned a push each time. The recipe must forbid guessing before it mentions `login`.
 assert.ok(skill.indexOf("**Never guess a URL.**") < skill.indexOf("Call remote **`login`**"));
@@ -109,20 +110,29 @@ async function handshake(command, args, cwd) {
     );
     const init = await next();
     assert.equal(init.result.serverInfo.name, "authnudge");
+    assert.match(init.result.instructions, /Never invent \/login/);
     child.stdin.write(encode({ jsonrpc: "2.0", id: 2, method: "tools/list" }));
     const listed = await next();
     const names = listed.result.tools.map((t) => t.name);
     assert.deepEqual(names, ["publicKey", "fill", "login"]); // preferred order, as agents read it
     const pub = listed.result.tools.find((t) => t.name === "publicKey");
     assert.match(pub.description, /never returned/i);
+    assert.match(pub.description, /never a guessed \/login/);
     const fillTool = listed.result.tools.find((t) => t.name === "fill");
     assert.match(fillTool.description, /^Preferred\./);
+    assert.match(fillTool.description, /never invent \/login/);
     assert.match(fillTool.description, /Never returns usernames/);
     assert.match(fillTool.description, /browser you work in/);
     assert.doesNotMatch(fillTool.description, /Does not fill Playwright/);
     assert.deepEqual(fillTool.inputSchema.required, ["url", "requestId", "claimToken"]);
+    const urlDesc = fillTool.inputSchema.properties.url.description;
+    assert.match(urlDesc, /Never invent \/login/);
+    assert.doesNotMatch(urlDesc, /galaxus\.ch\/login/);
     const loginTool = listed.result.tools.find((t) => t.name === "login");
     assert.match(loginTool.description, /^Fallback/);
+    assert.match(loginTool.description, /never invent \/login/);
+    assert.equal(loginTool.inputSchema.properties.url.description, urlDesc);
+    assert.doesNotMatch(JSON.stringify(listed.result.tools), /galaxus\.ch\/login/);
   } finally {
     clearTimeout(timeout);
     child.kill();

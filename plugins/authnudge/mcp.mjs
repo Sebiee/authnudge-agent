@@ -18,7 +18,8 @@ const version = readVersion();
 
 const URL_ARG = {
   type: "string",
-  description: "Login page to open in the DevTools Chrome before filling, e.g. https://www.galaxus.ch/login",
+  description:
+    "Copied from the live Chrome tab after you clicked Sign in, on the page that already shows the email/password form. Never invent /login, /signin, or /ap/signin — a guess 404s and still sends a push.",
 };
 const CDP_ARG = {
   type: "string",
@@ -29,13 +30,13 @@ const TOOLS = [
   {
     name: "publicKey",
     description:
-      "Call first. Creates (once) or returns this agent's requester public key as P-256 SPKI base64: pass it as requesterPublicKey to the Authnudge (OAuth) server's `login` tool, then call `fill` with that result. The matching private key is stored on this machine and is never returned. Also returns booleans toConfigured / apiKeyConfigured (not the secret values) for the fallback `login` tool here.",
+      "Call first. Creates (once) or returns this agent's requester public key as P-256 SPKI base64: pass it as requesterPublicKey to the Authnudge (OAuth) server's `login` tool with origin copied from the live Sign-in form tab (never a guessed /login), then call `fill` with that result. The matching private key is stored on this machine and is never returned. Also returns booleans toConfigured / apiKeyConfigured (not the secret values) for the fallback `login` tool here.",
     inputSchema: { type: "object", properties: {} },
   },
   {
     name: "fill",
     description:
-      "Preferred. After the Authnudge (OAuth) server's `login` tool opened a request with this agent's publicKey, wait for the phone grant and fill the login form in Chrome with remote debugging (default http://127.0.0.1:9222). Pass requestId, claimToken, and expiresAt from that result, plus the same login url. Returns within ~25s: `{ ok: true }`, a final status, or `status: \"waiting\"` — then call fill again with the same arguments (the request stays open until expiresAt). Never call the remote `login` again for the same site while a request is open; that sends the user another push. Stays if the site asks for a one-time code. Fills whichever Chrome cdpUrl points at: give it the browser you work in (find its --remote-debugging-port first; on shared machines the default 9222 may be another agent's), not a separate one. Results echo cdpUrl; a repeat call with a different cdpUrl restarts the fill there without losing the grant. Opens the login URL in a new tab unless one is already on that site. `status: \"fulfilled\"` means the request was already used; check the tab, it is probably signed in. Never returns usernames, passwords, codes, or the requester private key.",
+      "Preferred. `url` is copied from the live Sign-in form tab (never invent /login). After the Authnudge (OAuth) server's `login` tool opened a request with this agent's publicKey, wait for the phone grant and fill the login form in Chrome with remote debugging (default http://127.0.0.1:9222). Pass requestId, claimToken, and expiresAt from that result, plus the same login url. Returns within ~25s: `{ ok: true }`, a final status, or `status: \"waiting\"` — then call fill again with the same arguments (the request stays open until expiresAt). Never call the remote `login` again for the same site while a request is open; that sends the user another push. Stays if the site asks for a one-time code. Fills whichever Chrome cdpUrl points at: give it the browser you work in (find its --remote-debugging-port first; on shared machines the default 9222 may be another agent's), not a separate one. Results echo cdpUrl; a repeat call with a different cdpUrl restarts the fill there without losing the grant. Opens the login URL in a new tab unless one is already on that site. `status: \"fulfilled\"` means the request was already used; check the tab, it is probably signed in. Never returns usernames, passwords, codes, or the requester private key.",
     inputSchema: {
       type: "object",
       properties: {
@@ -51,7 +52,7 @@ const TOOLS = [
   {
     name: "login",
     description:
-      "Fallback when the Authnudge (OAuth) server is not connected. Creates the phone-grant request here and fills the login form in Chrome with remote debugging (default http://127.0.0.1:9222). Needs `to` (Authnudge email or handle) unless AUTHNUDGE_TO is set, and either AUTHNUDGE_API_KEY or this agent's publicKey saved at authnudge.com → Access → Public keys. Returns within ~25s; on `status: \"waiting\"` call login again with the same arguments (it reattaches, no second push). Same filling and secrecy rules as `fill`.",
+      "Fallback when the Authnudge (OAuth) server is not connected. Creates the phone-grant request here and fills the login form in Chrome with remote debugging (default http://127.0.0.1:9222). Pass the live Sign-in form url (never invent /login). Needs `to` (Authnudge email or handle) unless AUTHNUDGE_TO is set, and either AUTHNUDGE_API_KEY or this agent's publicKey saved at authnudge.com → Access → Public keys. Returns within ~25s; on `status: \"waiting\"` call login again with the same arguments (it reattaches, no second push). Same filling and secrecy rules as `fill`.",
     inputSchema: {
       type: "object",
       properties: {
@@ -100,6 +101,8 @@ async function handle(msg) {
       protocolVersion: params?.protocolVersion || "2024-11-05",
       capabilities: { tools: {} },
       serverInfo: { name: "authnudge", version },
+      instructions:
+        "url and origin are the live Sign-in form tab, copied after clicking Sign in. Never invent /login, /signin, or /ap/signin.",
     });
   }
   if (method === "ping") return reply(id, {});
