@@ -1,11 +1,25 @@
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { attachCdpPage, defaultCdpUrl } from "./cdp.mjs";
+import { attachCdpPage, resolveCdpUrl } from "./cdp.mjs";
 import { decryptEnvelope, generateRequesterKeys, requesterFingerprint, signRequest } from "./e2e.js";
 import { ignorePlaceholder, normalizeBaseUrl, normalizeOrigin, normalizeTo, sameLoginHost } from "./origin.js";
 
 const DEFAULT_BASE = "https://authnudge.com";
+/** Keep in lockstep with Authnudge2 `RELAY_TTL_MS`. */
+export const RELAY_TTL_MS = 10 * 60 * 1000;
+
+/** ISO string or unix-ms number. `str()` on the MCP layer used to drop numbers. */
+export function parseExpiresAt(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : NaN;
+  if (typeof value !== "string") return NaN;
+  const trimmed = value.trim();
+  if (!trimmed) return NaN;
+  const fromIso = Date.parse(trimmed);
+  if (Number.isFinite(fromIso)) return fromIso;
+  const n = Number(trimmed);
+  return Number.isFinite(n) ? n : NaN;
+}
 
 /** Wall-clock budgets (ms). Exported so checks can shrink them; not a config surface. */
 export const timing = {
@@ -70,11 +84,14 @@ function resolveBaseUrl(options) {
   return normalizeBaseUrl(ignorePlaceholder(options.baseUrl ?? process.env.AUTHNUDGE_URL) || DEFAULT_BASE);
 }
 
-export async function createCredentialRequest({ baseUrl, to, origin, apiKey, publicKey, signature }) {
+export async function createCredentialRequest({ baseUrl, to, origin, apiKey, publicKey, signature, issuedAt }) {
   const headers = { "content-type": "application/json" };
   if (apiKey) headers.authorization = `Bearer ${apiKey}`;
   const body = { to, origin, requesterPublicKey: publicKey };
-  if (signature) body.signature = signature;
+  if (signature) {
+    body.signature = signature;
+    body.issuedAt = issuedAt;
+  }
   const res = await fetch(`${baseUrl}/api/v1/requests`, { method: "POST", headers, body: JSON.stringify(body) });
   const payload = await res.json().catch(() => ({}));
   return { status: res.status, body: payload };
@@ -102,19 +119,25 @@ async function markDone({ baseUrl, requestId, claimToken }) {
   }
 }
 
-/** Poll until the relay shows a new envelope, is fulfilled, or expires. GET does not consume; `lastCiphertext` tells a new step from a re-read. */
+/** Poll until the relay shows a new envelope, is fulfilled, or expires. GET does not consume; `lastCiphertext` tells a new step from a re-read. Deadline follows GET `expiresAt` (relay TTL or a shorter code window), not a local 5-minute guess. */
 export async function waitForEnvelope({ baseUrl, requestId, claimToken, expiresAt, signal, lastCiphertext = "" }) {
-  while (Date.now() < expiresAt) {
+  let deadline = parseExpiresAt(expiresAt);
+  if (!Number.isFinite(deadline)) deadline = Date.now() + RELAY_TTL_MS;
+  while (Date.now() < deadline) {
     if (signal?.aborted) return { status: "error", code: "aborted" };
     try {
       const res = await fetch(`${baseUrl}/api/v1/requests/${requestId}`, { headers: { authorization: `Bearer ${claimToken}` } });
       if (res.ok) {
         const data = await res.json();
+        const next = parseExpiresAt(data.expiresAt);
+        if (Number.isFinite(next)) deadline = next;
         if (data.envelope && data.envelope.ciphertext !== lastCiphertext) {
           return { status: "holding", envelope: data.envelope, envelopeKind: data.envelopeKind || "password" };
         }
         if (data.status === "fulfilled") return { status: "fulfilled" };
-        if (data.status === "expired") return { status: "expired" };
+        if (data.status === "expired" || deadline <= Date.now()) return { status: "expired" };
+      } else if (res.status === 401 || res.status === 403) {
+        return { status: "error", code: "unauthorized" };
       } else if (res.status === 404 || res.status === 410) {
         // The relay dropped it (e.g. the 90 s code window closed). Its own deadline can be earlier than the request's.
         return { status: "expired" };
@@ -193,7 +216,7 @@ async function awaitLoginForm(page, origin) {
   return {
     ok: false,
     status: "no_form",
-    message: `No login form at ${origin}. Find the page that shows the email/password form (often on an id., login., or account. host) and open a new request for that exact URL.`,
+    message: `No login form at ${origin}. Find the page that shows the email/password form (often on an id., login., or account. host). Do not call login again: if you already have requestId and claimToken, call fill again with those and this URL. The phone is not pushed until fill polls after seeing a form.`,
   };
 }
 
@@ -299,8 +322,9 @@ async function fillFromRelay(page, origin, keys, relay) {
 }
 
 /**
- * Fill `page` for a request the Authnudge OAuth MCP `login` tool already opened (it was given this
- * machine's `publicKey`). No handle, API key, or pairing needed. Never returns usernames or passwords.
+ * Fill `page` for a request plugin-authnudge-authnudge `login` already opened (it was given this
+ * machine's `publicKey`). Phone push happens on the first relay poll after a form is on screen.
+ * No handle, API key, or pairing needed. Never returns usernames or passwords.
  */
 export async function fill(page, options = {}) {
   const claim = claimOf(options);
@@ -315,17 +339,21 @@ export async function fill(page, options = {}) {
   if (!origin) return { ok: false, status: "error", message: "The page URL is not a login origin." };
   const form = await awaitLoginForm(page, origin);
   if (!form.ok) return form;
+  const deadline = parseExpiresAt(options.expiresAt);
+  if (!Number.isFinite(deadline)) return MISSING_EXPIRES;
 
   return fillFromRelay(page, origin, await loadPersistentKeys(), {
     baseUrl,
     ...claim,
-    expiresAt: Date.parse(options.expiresAt) || Date.now() + 5 * 60 * 1000,
+    expiresAt: deadline,
     signal: options.signal,
   });
 }
 
 const MISSING_CLAIM = { ok: false, status: "error", message: "Pass requestId and claimToken from the Authnudge `login` tool result." };
+const MISSING_EXPIRES = { ok: false, status: "error", message: "Pass expiresAt (ISO) from the Authnudge `login` tool result." };
 const FULFILLED = { ok: false, status: "fulfilled", message: "This request was already used. Check whether that Chrome tab is signed in before opening a new request." };
+const MISSING_URL = { ok: false, status: "error", message: "Pass url copied from the live Sign-in form tab (never invent /login)." };
 
 function claimOf(options) {
   const requestId = String(options.requestId ?? "").trim();
@@ -363,7 +391,7 @@ export async function login(page, options = {}) {
       origin,
       apiKey: namedKey ? apiKey : "",
       publicKey: keys.publicKey,
-      signature: namedKey ? undefined : await signRequest(keys.privateKey, { to, origin, publicKey: keys.publicKey }),
+      ...(namedKey ? {} : await signRequest(keys.privateKey, { to, origin, publicKey: keys.publicKey })),
     });
   } catch {
     return { ok: false, status: "error", message: "Could not reach Authnudge." };
@@ -385,7 +413,7 @@ export async function login(page, options = {}) {
     baseUrl,
     requestId: created.body.requestId,
     claimToken: created.body.claimToken,
-    expiresAt: Date.parse(created.body.expiresAt) || Date.now() + 5 * 60 * 1000,
+    expiresAt: parseExpiresAt(created.body.expiresAt) || Date.now() + RELAY_TTL_MS,
     signal: options.signal,
   });
 }
@@ -440,13 +468,22 @@ export async function pollJob(key, start, waiting, tag = "") {
   return job.result;
 }
 
-const RETRY_FILL = "Not done yet: waiting on the account holder's phone (approval, or the one-time code if the site asked for one). Call fill again with the same url, requestId, and claimToken. Do not call login again; that would send a second push. Check cdpUrl is the browser you work in; if not, call fill again with the right cdpUrl.";
-const RETRY_LOGIN = "Not done yet: waiting on the account holder's phone (approval, or the one-time code if the site asked for one). Call login again with the same url (and to). Only one request is open per site. Check cdpUrl is the browser you work in.";
+const RETRY_FILL = "Not done yet: waiting on the account holder's phone (approval, or the one-time code if the site asked for one). Call fill again with the same url, requestId, claimToken, and expiresAt. Do not call login again; reuse this request. Check cdpUrl is the browser you work in; if not, call fill again with the right cdpUrl.";
+const RETRY_LOGIN = "Not done yet: waiting on the account holder's phone (approval, or the one-time code if the site asked for one). Call loginFallback again with the same url (and to). Only one request is open per site. Check cdpUrl is the browser you work in.";
+
+const BAD_CDP = {
+  ok: false,
+  status: "error",
+  message:
+    "Pass cdpUrl as a loopback http(s) Chrome DevTools URL (127.0.0.1, localhost, or [::1]). Userinfo and remote hosts are rejected. Or set AUTHNUDGE_CDP_URL.",
+};
 
 export async function fillCdp(options = {}) {
   const claim = claimOf(options);
   if (!claim) return MISSING_CLAIM;
-  const cdpUrl = ignorePlaceholder(options.cdpUrl) || defaultCdpUrl();
+  if (!Number.isFinite(parseExpiresAt(options.expiresAt))) return { ...MISSING_EXPIRES, cdpUrl: resolveCdpUrl(options.cdpUrl) || "" };
+  const cdpUrl = resolveCdpUrl(options.cdpUrl);
+  if (!cdpUrl) return { ...BAD_CDP, cdpUrl: "" };
   const result = await pollJob(
     `fill:${claim.requestId}`,
     (signal) => onCdpPage({ ...options, cdpUrl }, fill, signal),
@@ -457,7 +494,9 @@ export async function fillCdp(options = {}) {
 }
 
 export async function loginCdp(options = {}) {
-  const cdpUrl = ignorePlaceholder(options.cdpUrl) || defaultCdpUrl();
+  if (!String(options.url ?? "").trim()) return { ...MISSING_URL, cdpUrl: resolveCdpUrl(options.cdpUrl) || "" };
+  const cdpUrl = resolveCdpUrl(options.cdpUrl);
+  if (!cdpUrl) return { ...BAD_CDP, cdpUrl: "" };
   const site = normalizeOrigin(options.url ?? "") || cdpUrl;
   const result = await pollJob(`login:${site}`, (signal) => onCdpPage({ ...options, cdpUrl }, login, signal), { message: RETRY_LOGIN }, cdpUrl);
   return { ...result, cdpUrl };

@@ -1,11 +1,10 @@
 ---
-description: Use Authnudge for the sign-in step of any website. Never ask the user to take over the screen or type a password; never type one yourself.
+description: Never type a password, username, or one-time code, and never ask the user to take over to log in. Tools: plugin-authnudge-authnudge login, plugin-authnudge-authnudge-chrome fill and loginFallback.
 alwaysApply: true
 ---
 
-# Authnudge for the sign-in step
+# Never type passwords
 
-- Browsing yourself is fine (computer-use, Playwright, tabs, clicks). When a site needs a login, follow the **authnudge-login** skill for that step only.
-- Never ask for, type, or print a username, password, or one-time code. Never hand the screen to the user to log in.
-- Do not call Authnudge `login` until a password field is on screen: know your own Chrome's DevTools port (`--remote-debugging-port=<port>`, pass it as `cdpUrl`); click Sign in, copy that URL, never guess one. Do not start a separate "Authnudge Chrome".
-- One remote `login` per site = one push to their phone. `status: "waiting"` means call the same tool again with the same arguments, nothing else.
+- Browsing yourself is fine (computer-use, Playwright, tabs, clicks). Follow the **authnudge-login** skill only when the task is to sign in or you need to sign in into the users account to complete a task.
+- Never ask for, type, or print a username, password, or one-time code. Never ask the user to take over to type a password.
+- If a site wants a one-time code, tell them to look at that Chrome or their phone; never to paste it in chat.

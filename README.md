@@ -11,7 +11,7 @@ This repository is the agent plugin, not the [Authnudge web app](https://authnud
 
 | Plugin | Path | What it adds |
 | --- | --- | --- |
-| **authnudge** | `plugins/authnudge` | Remote OAuth MCP (`login`) + local MCP (`publicKey`, `fill`, fallback `login`), skill, always-apply rule (Authnudge for the sign-in step) |
+| **authnudge** | `plugins/authnudge` | Remote OAuth MCP (`login`) + local MCP (`publicKey`, `fill`, `loginFallback`), skill, always-apply rule (never type a password) |
 
 The remote server is `https://authnudge.com/mcp`; Cursor runs the OAuth connection. The local server is launched the same way as the template’s example:
 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { flattenFrameTree, pickFormFrame, pickTab, samePage } from "./cdp.mjs";
+import { flattenFrameTree, framesOnGrant, parseCdpUrl, pickFormFrame, pickTab, resolveCdpUrl, samePage } from "./cdp.mjs";
 
 const galaxus = { type: "page", url: "https://www.galaxus.ch/login", webSocketDebuggerUrl: "ws://g" };
 const shop = { type: "page", url: "https://www.galaxus.ch/de/s1/product/1", webSocketDebuggerUrl: "ws://s" };
@@ -32,5 +32,42 @@ assert.equal(pickFormFrame([ad, footer, form]), form);
 assert.equal(pickFormFrame([ad, footer]), footer);
 assert.equal(pickFormFrame([ad, { frameId: "x", value: { ok: true } }]), null);
 assert.equal(pickFormFrame([]), null);
+
+assert.equal(parseCdpUrl("http://127.0.0.1:9222"), "http://127.0.0.1:9222");
+assert.equal(parseCdpUrl("http://localhost:9241/"), "http://localhost:9241");
+assert.equal(parseCdpUrl("http://[::1]:9222"), "http://[::1]:9222");
+assert.equal(parseCdpUrl("https://127.0.0.1:9222"), "https://127.0.0.1:9222");
+assert.equal(parseCdpUrl("http://127.0.0.1:9222@evil.com/"), "");
+assert.equal(parseCdpUrl("http://evil.com@127.0.0.1:9222/"), "");
+assert.equal(parseCdpUrl("http://evil.com:9222"), "");
+assert.equal(parseCdpUrl("ws://127.0.0.1:9222"), "");
+assert.equal(parseCdpUrl("http://0.0.0.0:9222"), "");
+assert.equal(parseCdpUrl("http://[::ffff:127.0.0.1]:9222"), "");
+assert.equal(parseCdpUrl(""), "");
+{
+  const prev = process.env.AUTHNUDGE_CDP_URL;
+  delete process.env.AUTHNUDGE_CDP_URL;
+  assert.equal(resolveCdpUrl(""), "");
+  assert.equal(resolveCdpUrl("http://127.0.0.1:9222@evil.com/"), "");
+  process.env.AUTHNUDGE_CDP_URL = "http://127.0.0.1:9333";
+  assert.equal(resolveCdpUrl(""), "http://127.0.0.1:9333");
+  assert.equal(resolveCdpUrl("${AUTHNUDGE_CDP_URL}"), "http://127.0.0.1:9333");
+  assert.equal(resolveCdpUrl("http://evil.com:9222"), "");
+  if (prev === undefined) delete process.env.AUTHNUDGE_CDP_URL;
+  else process.env.AUTHNUDGE_CDP_URL = prev;
+}
+
+const granted = [
+  { id: "root", url: "https://shop.example/login" },
+  { id: "ad", url: "https://evil.example/ad" },
+  { id: "widget", url: "https://shop.example/widget" },
+  { id: "blank", url: "about:blank" },
+];
+assert.deepEqual(
+  framesOnGrant(granted, "https://shop.example/login").map((frame) => frame.id),
+  ["root", "widget"],
+);
+assert.deepEqual(framesOnGrant(granted, ""), []);
+assert.deepEqual(framesOnGrant([{ id: "ad", url: "https://evil.example/" }], "https://shop.example/login"), []);
 
 console.log("authnudge cdp check ok");

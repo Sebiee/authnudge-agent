@@ -1,5 +1,6 @@
 // Runs inside the page (one isolated world per frame). Never receives or returns field values:
 // the host types with Chrome's Input.insertText, this only finds, focuses, and submits.
+// ponytail: no shadow-DOM pierce; add a site list if real logins stay unfilled.
 export function loginFormOp({ op, kind, index = 0, expectedOrigin }) {
   const hostOf = (value) => {
     try {
@@ -11,15 +12,9 @@ export function loginFormOp({ op, kind, index = 0, expectedOrigin }) {
     }
   };
   const want = hostOf(expectedOrigin);
-  if (want && hostOf(location.href) !== want) {
-    let top = null;
-    try {
-      top = hostOf(window.top.location.href);
-    } catch {
-      /* cross-origin frame */
-    }
-    if (top !== want) return { ok: false, reason: "wrong_origin" };
-  }
+  const here = hostOf(location.href);
+  // Own frame host only: the parent page origin is not a fill license (evil iframe on a granted page).
+  if (!want || here !== want) return { ok: false, reason: "wrong_origin" };
 
   const visible = (el) => {
     if (!el || el.disabled || el.readOnly || el.type === "hidden" || el.getAttribute("aria-hidden") === "true") return false;

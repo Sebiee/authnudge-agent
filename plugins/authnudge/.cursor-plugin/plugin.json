@@ -18,12 +18,17 @@
       "AUTHNUDGE_TO": {
         "type": "string",
         "title": "Authnudge email or handle",
-        "description": "Optional fallback when the Authnudge OAuth connection is not used. If set, the fallback login uses this handle and the agent must not ask for one."
+        "description": "Optional fallback when the Authnudge OAuth connection is not used. If set, the fallback loginFallback uses this handle and the agent must not ask for one."
       },
       "AUTHNUDGE_API_KEY": {
         "type": "string",
         "title": "API key",
         "description": "Optional fallback when the Authnudge OAuth connection is not used. Dashboard API key (an_…). If set, the agent must not ask you to paste a public key. If omitted too, the agent shows its public key and you paste it under Access → Public keys."
+      },
+      "AUTHNUDGE_CDP_URL": {
+        "type": "string",
+        "title": "Chrome DevTools URL",
+        "description": "Optional. Loopback Chrome DevTools HTTP URL (127.0.0.1, localhost, or [::1]) used when fill/loginFallback omit cdpUrl. There is no default port. Userinfo and non-loopback hosts are rejected."
       }
     }
   }

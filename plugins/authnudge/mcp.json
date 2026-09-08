@@ -9,7 +9,8 @@
       "args": ["-y", "authnudge-mcp"],
       "env": {
         "AUTHNUDGE_TO": "${AUTHNUDGE_TO}",
-        "AUTHNUDGE_API_KEY": "${AUTHNUDGE_API_KEY}"
+        "AUTHNUDGE_API_KEY": "${AUTHNUDGE_API_KEY}",
+        "AUTHNUDGE_CDP_URL": "${AUTHNUDGE_CDP_URL}"
       }
     }
   }

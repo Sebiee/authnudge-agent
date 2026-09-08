@@ -19,40 +19,41 @@ const version = readVersion();
 const URL_ARG = {
   type: "string",
   description:
-    "Copied from the live Chrome tab after you clicked Sign in, on the page that already shows the email/password form. Never invent /login, /signin, or /ap/signin — a guess 404s and still sends a push.",
+    "Copied from the live Chrome tab after you clicked Sign in, on the page that already shows the email/password form. Never invent /login, /signin, or /ap/signin.",
 };
 const CDP_ARG = {
   type: "string",
-  description: "Chrome DevTools HTTP URL of the browser you work in. Defaults to AUTHNUDGE_CDP_URL or http://127.0.0.1:9222.",
+  description:
+    "Chrome DevTools HTTP URL of the browser you work in. Loopback only (127.0.0.1, localhost, or [::1]). Required unless AUTHNUDGE_CDP_URL is set. No default port. Userinfo and non-loopback hosts are rejected.",
 };
 
 const TOOLS = [
   {
     name: "publicKey",
     description:
-      "Call first. Creates (once) or returns this agent's requester public key as P-256 SPKI base64: pass it as requesterPublicKey to the Authnudge (OAuth) server's `login` tool with origin copied from the live Sign-in form tab (never a guessed /login), then call `fill` with that result. The matching private key is stored on this machine and is never returned. Also returns booleans toConfigured / apiKeyConfigured (not the secret values) for the fallback `login` tool here.",
+      "Call first. Creates (once) or returns this agent's requester public key as P-256 SPKI base64: pass it as requesterPublicKey to plugin-authnudge-authnudge `login` with origin copied from the live Sign-in form tab (never a guessed /login), then call plugin-authnudge-authnudge-chrome `fill` with that result. The matching private key is stored on this machine and is never returned. Also returns booleans toConfigured / apiKeyConfigured (not the secret values) for the fallback `loginFallback` tool here.",
     inputSchema: { type: "object", properties: {} },
   },
   {
     name: "fill",
     description:
-      "Preferred. `url` is copied from the live Sign-in form tab (never invent /login). After the Authnudge (OAuth) server's `login` tool opened a request with this agent's publicKey, wait for the phone grant and fill the login form in Chrome with remote debugging (default http://127.0.0.1:9222). Pass requestId, claimToken, and expiresAt from that result, plus the same login url. Returns within ~25s: `{ ok: true }`, a final status, or `status: \"waiting\"` — then call fill again with the same arguments (the request stays open until expiresAt). Never call the remote `login` again for the same site while a request is open; that sends the user another push. Stays if the site asks for a one-time code. Fills whichever Chrome cdpUrl points at: give it the browser you work in (find its --remote-debugging-port first; on shared machines the default 9222 may be another agent's), not a separate one. Results echo cdpUrl; a repeat call with a different cdpUrl restarts the fill there without losing the grant. Opens the login URL in a new tab unless one is already on that site. `status: \"fulfilled\"` means the request was already used; check the tab, it is probably signed in. Never returns usernames, passwords, codes, or the requester private key.",
+      "Preferred. `url` is copied from the live Sign-in form tab (never invent /login). After plugin-authnudge-authnudge `login` opened a request with this agent's publicKey, wait for the phone grant and fill the login form in Chrome with remote debugging. The phone is pushed on this tool's first poll after a login form is on screen — not at remote `login`. Pass requestId, claimToken, expiresAt (ISO, copied from login), and cdpUrl (loopback DevTools URL of the browser you work in; required unless AUTHNUDGE_CDP_URL is set; no default port). Returns within ~25s: `{ ok: true }`, a final status, or `status: \"waiting\"` — then call fill again with the same arguments (the request stays open until expiresAt). Never call remote `login` again for the same site while a request is open. Stays if the site asks for a one-time code. Fills whichever Chrome cdpUrl points at: give it the browser you work in (find its --remote-debugging-port first), not a separate one. Results echo cdpUrl; a repeat call with a different cdpUrl restarts the fill there without losing the grant. Opens the login URL in a new tab unless one is already on that site. `status: \"fulfilled\"` means the request was already used; check the tab, it is probably signed in. Never returns usernames, passwords, codes, or the requester private key.",
     inputSchema: {
       type: "object",
       properties: {
         url: URL_ARG,
         requestId: { type: "string", description: "requestId from the Authnudge `login` tool result." },
         claimToken: { type: "string", description: "claimToken from the Authnudge `login` tool result." },
-        expiresAt: { type: "string", description: "expiresAt (ISO) from the Authnudge `login` tool result." },
+        expiresAt: { type: "string", description: "ISO expiresAt from the Authnudge `login` tool result. Required. Copy it; do not invent a deadline." },
         cdpUrl: CDP_ARG,
       },
-      required: ["url", "requestId", "claimToken"],
+      required: ["url", "requestId", "claimToken", "expiresAt"],
     },
   },
   {
-    name: "login",
+    name: "loginFallback",
     description:
-      "Fallback when the Authnudge (OAuth) server is not connected. Creates the phone-grant request here and fills the login form in Chrome with remote debugging (default http://127.0.0.1:9222). Pass the live Sign-in form url (never invent /login). Needs `to` (Authnudge email or handle) unless AUTHNUDGE_TO is set, and either AUTHNUDGE_API_KEY or this agent's publicKey saved at authnudge.com → Access → Public keys. Returns within ~25s; on `status: \"waiting\"` call login again with the same arguments (it reattaches, no second push). Same filling and secrecy rules as `fill`.",
+      "Fallback when plugin-authnudge-authnudge is not connected. Creates the phone-grant request here (after a login form is on screen) and fills Chrome with remote debugging. Pass the live Sign-in form url (never invent /login) and cdpUrl (loopback; required unless AUTHNUDGE_CDP_URL is set). Needs `to` (Authnudge email or handle) unless AUTHNUDGE_TO is set, and either AUTHNUDGE_API_KEY or this agent's publicKey saved at authnudge.com → Access → Public keys. Returns within ~25s; on `status: \"waiting\"` call loginFallback again with the same arguments (it reattaches, no second push). Same filling and secrecy rules as `fill`.",
     inputSchema: {
       type: "object",
       properties: {
@@ -63,6 +64,7 @@ const TOOLS = [
         },
         cdpUrl: CDP_ARG,
       },
+      required: ["url"],
     },
   },
 ];
@@ -102,7 +104,7 @@ async function handle(msg) {
       capabilities: { tools: {} },
       serverInfo: { name: "authnudge", version },
       instructions:
-        "url and origin are the live Sign-in form tab, copied after clicking Sign in. Never invent /login, /signin, or /ap/signin.",
+        "url and origin are the live Sign-in form tab, copied after clicking Sign in. Never invent /login, /signin, or /ap/signin. This server is plugin-authnudge-authnudge-chrome (`publicKey`, `fill`, `loginFallback`). Remote OAuth login is plugin-authnudge-authnudge `login`.",
     });
   }
   if (method === "ping") return reply(id, {});
@@ -120,10 +122,10 @@ async function handle(msg) {
           url: str(args.url),
           requestId: str(args.requestId),
           claimToken: str(args.claimToken),
-          expiresAt: str(args.expiresAt),
+          expiresAt: typeof args.expiresAt === "number" ? args.expiresAt : str(args.expiresAt),
           cdpUrl: str(args.cdpUrl),
         });
-      } else if (name === "login") {
+      } else if (name === "loginFallback") {
         result = await loginCdp({ url: str(args.url), to: str(args.to), cdpUrl: str(args.cdpUrl) });
       } else return fail(id, -32601, "Unknown tool");
     } catch {

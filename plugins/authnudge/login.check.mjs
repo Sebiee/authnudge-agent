@@ -4,8 +4,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decryptEnvelope, encryptForRequester, generateRequesterKeys } from "./e2e.js";
 import { loginFormOp } from "./fill.js";
-import { fill, login, pollJob, publicKeyInfo, timing, waitForEnvelope } from "./login.mjs";
+import { fill, fillCdp, login, loginCdp, parseExpiresAt, pollJob, publicKeyInfo, RELAY_TTL_MS, timing, waitForEnvelope } from "./login.mjs";
 import { ignorePlaceholder, normalizeTo } from "./origin.js";
+
+assert.equal(parseExpiresAt("2026-09-08T12:00:00.000Z"), Date.parse("2026-09-08T12:00:00.000Z"));
+assert.equal(parseExpiresAt(1_700_000_000_000), 1_700_000_000_000);
+assert.equal(Number.isFinite(parseExpiresAt("")), false);
+assert.equal(RELAY_TTL_MS, 10 * 60 * 1000);
+
+{
+  const loginSrc = readFileSync(new URL("./login.mjs", import.meta.url), "utf8");
+  assert.doesNotMatch(loginSrc, /\?claim=/);
+  assert.doesNotMatch(loginSrc, /searchParams\.set\(["']claim/);
+  assert.match(loginSrc, /headers: \{ authorization: `Bearer \$\{claimToken\}` \}/);
+}
 
 // The relay's code window (90 s) can close before the request's own deadline: a 404 there is final, not "still waiting".
 {
@@ -16,6 +28,26 @@ import { ignorePlaceholder, normalizeTo } from "./origin.js";
   globalThis.fetch = realFetch;
   assert.deepEqual(gone, { status: "expired" });
   assert.ok(Date.now() - started < 1_000, "must not poll a dropped request until the original deadline");
+}
+
+{
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response("", { status: 401 });
+  const started = Date.now();
+  const denied = await waitForEnvelope({ baseUrl: "http://relay.test", requestId: "r", claimToken: "c", expiresAt: Date.now() + 60_000 });
+  globalThis.fetch = realFetch;
+  assert.deepEqual(denied, { status: "error", code: "unauthorized" });
+  assert.ok(Date.now() - started < 1_000, "401 must not poll until the deadline");
+}
+
+{
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({ status: "pending", expiresAt: new Date(Date.now() - 1).toISOString() });
+  const started = Date.now();
+  const past = await waitForEnvelope({ baseUrl: "http://relay.test", requestId: "r", claimToken: "c", expiresAt: Date.now() + 60_000 });
+  globalThis.fetch = realFetch;
+  assert.deepEqual(past, { status: "expired" });
+  assert.ok(Date.now() - started < 1_000, "GET expiresAt in the past must not keep the local 5-minute/TTL guess");
 }
 
 // Fake pages react instantly; the budgets only need to be long enough for a few loop turns.
@@ -64,7 +96,49 @@ assert.match(src, /anmelden/);
 assert.match(src, /one-time-code/);
 assert.match(src, /button\[type=submit\]/);
 assert.doesNotMatch(src, /\.value = /); // never writes a value; typing is Input.insertText
+assert.doesNotMatch(src, /window\.top/);
 assert.match(readFileSync(new URL("./login.mjs", import.meta.url), "utf8"), /\/continue/);
+
+{
+  const prevLocation = globalThis.location;
+  const prevWindow = globalThis.window;
+  globalThis.location = { href: "https://evil.example/ad" };
+  globalThis.window = { top: { location: { href: "https://shop.example/login" } } };
+  assert.deepEqual(loginFormOp({ op: "inspect", expectedOrigin: "https://shop.example/login" }), {
+    ok: false,
+    reason: "wrong_origin",
+  });
+  assert.deepEqual(loginFormOp({ op: "inspect", expectedOrigin: "" }), { ok: false, reason: "wrong_origin" });
+  if (prevLocation === undefined) delete globalThis.location;
+  else globalThis.location = prevLocation;
+  if (prevWindow === undefined) delete globalThis.window;
+  else globalThis.window = prevWindow;
+}
+
+{
+  const prev = process.env.AUTHNUDGE_CDP_URL;
+  delete process.env.AUTHNUDGE_CDP_URL;
+  const grant = { requestId: "r", claimToken: "c", expiresAt: new Date(Date.now() + 60_000).toISOString() };
+  const missing = await fillCdp({ url: "https://shop.example/login", ...grant });
+  assert.equal(missing.ok, false);
+  assert.match(missing.message, /loopback/);
+  const noExp = await fillCdp({ url: "https://shop.example/login", requestId: "r", claimToken: "c", cdpUrl: "http://127.0.0.1:9222" });
+  assert.equal(noExp.ok, false);
+  assert.match(noExp.message, /expiresAt/);
+  const evil = await fillCdp({
+    url: "https://shop.example/login",
+    ...grant,
+    cdpUrl: "http://127.0.0.1:9222@evil.com/",
+  });
+  assert.equal(evil.ok, false);
+  const remoteLogin = await loginCdp({ url: "https://shop.example/login", to: "you@example.com", cdpUrl: "http://evil.com:9222" });
+  assert.equal(remoteLogin.ok, false);
+  const noUrl = await loginCdp({ to: "you@example.com", cdpUrl: "http://127.0.0.1:9222" });
+  assert.equal(noUrl.ok, false);
+  assert.match(noUrl.message, /url/i);
+  if (prev === undefined) delete process.env.AUTHNUDGE_CDP_URL;
+  else process.env.AUTHNUDGE_CDP_URL = prev;
+}
 
 const pair = await generateRequesterKeys();
 const otpEnvelope = await encryptForRequester(pair.publicKey, { otp: "123456", origin: "https://www.galaxus.ch/login" }, "req-otp", "otp");
@@ -200,7 +274,7 @@ const opts = { to: "you@example.com", baseUrl: "http://127.0.0.1:9" };
   const { publicKey } = await publicKeyInfo();
   // mockRelay learns the requester key from the create POST; the OAuth server did that for us. Prime it the same way.
   await fetch("http://127.0.0.1:9/api/v1/requests", { method: "POST", body: JSON.stringify({ requesterPublicKey: publicKey }) });
-  const grant = { requestId: "req-oauth", claimToken: "claim-req-oauth", expiresAt: new Date(Date.now() + 60_000).toISOString() };
+  const grant = { requestId: "req-oauth", claimToken: "claim-req-oauth", expiresAt: Date.now() + 60_000 };
   const result = await fill(page, { ...grant, baseUrl: opts.baseUrl });
   assert.deepEqual(result, { ok: true });
   assert.equal(seen.continue, 1);
@@ -219,6 +293,9 @@ globalThis.fetch = async () => {
 const noClaim = await fill(fakePage(), { requestId: "x", baseUrl: opts.baseUrl });
 assert.equal(noClaim.status, "error");
 assert.match(noClaim.message, /claimToken/);
+const noExpires = await fill(fakePage(), { requestId: "x", claimToken: "y", baseUrl: opts.baseUrl, url: origin });
+assert.equal(noExpires.status, "error");
+assert.match(noExpires.message, /expiresAt/);
 
 // Wrong URL (a 404, a home page): say so before the grant is taken or a push is sent, so nothing is wasted.
 globalThis.fetch = async () => {
@@ -240,7 +317,8 @@ mockRelay("req-0", {
   checkPost: (body, headers) => {
     assert.equal(headers.authorization, undefined);
     assert.ok(body.requesterPublicKey);
-    assert.ok(body.signature);
+    assert.equal(typeof body.signature, "string");
+    assert.equal(typeof body.issuedAt, "number");
   },
 });
 const pairing = await login(fakePage(), opts);
@@ -313,6 +391,7 @@ mockRelay("req-7", {
   checkPost: (body, headers) => {
     assert.equal(headers.authorization, "Bearer an_testkey_xxxxxxxx");
     assert.equal(body.signature, undefined);
+    assert.equal(body.issuedAt, undefined);
     assert.equal(body.to, "you@example.com");
     assert.equal(body.origin, origin);
   },

@@ -1,8 +1,32 @@
 import { loginFormOp } from "./fill.js";
-import { ignorePlaceholder } from "./origin.js";
+import { ignorePlaceholder, sameLoginHost } from "./origin.js";
 
-export function defaultCdpUrl() {
-  return ignorePlaceholder(process.env.AUTHNUDGE_CDP_URL) || "http://127.0.0.1:9222";
+const LOOPBACK = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+
+/** Loopback Chrome DevTools HTTP URL, or "" if missing/unsafe. Rejects userinfo and non-loopback hosts. */
+export function parseCdpUrl(value) {
+  const raw = ignorePlaceholder(value);
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+    if (url.username || url.password) return "";
+    if (!LOOPBACK.has(url.hostname.toLowerCase())) return "";
+    return url.origin;
+  } catch {
+    return "";
+  }
+}
+
+/** Tool arg if present (even when invalid); otherwise AUTHNUDGE_CDP_URL. No 9222 default. */
+export function resolveCdpUrl(value) {
+  const raw = ignorePlaceholder(value);
+  if (raw) return parseCdpUrl(raw);
+  return parseCdpUrl(process.env.AUTHNUDGE_CDP_URL);
+}
+
+export function framesOnGrant(frames, expectedOrigin) {
+  return (frames ?? []).filter((frame) => sameLoginHost(frame?.url, expectedOrigin));
 }
 
 export function flattenFrameTree(node, out = []) {
@@ -108,7 +132,12 @@ function openWs(url) {
 }
 
 export async function attachCdpPage(cdpUrl, wantUrl) {
-  cdpUrl = ignorePlaceholder(cdpUrl) || defaultCdpUrl();
+  cdpUrl = resolveCdpUrl(cdpUrl);
+  if (!cdpUrl) {
+    throw new Error(
+      "Pass cdpUrl as a loopback http(s) Chrome DevTools URL (127.0.0.1, localhost, or [::1]). Userinfo and remote hosts are rejected. Or set AUTHNUDGE_CDP_URL.",
+    );
+  }
   let tabs;
   try {
     const res = await fetch(new URL("/json/list", cdpUrl));
@@ -263,7 +292,7 @@ export async function attachCdpPage(cdpUrl, wantUrl) {
       } catch {
         continue;
       }
-      for (const frame of frames) {
+      for (const frame of framesOnGrant(frames, arg?.expectedOrigin)) {
         if (!frame.id || seen.has(frame.id)) continue;
         seen.add(frame.id);
         try {
