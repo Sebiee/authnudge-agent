@@ -1,7 +1,7 @@
 {
   "name": "authnudge",
   "displayName": "Authnudge",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Log an agent into a website by approving on your phone. Connect your Authnudge account with OAuth, or set a handle and API key. Fills Chrome with remote debugging. Usernames and passwords never appear in chat.",
   "author": {
     "name": "Authnudge",

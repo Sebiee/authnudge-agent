@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { attachCdpPage } from "./cdp.mjs";
+import { attachCdpPage, defaultCdpUrl } from "./cdp.mjs";
 import { decryptEnvelope, generateRequesterKeys, requesterFingerprint, signRequest } from "./e2e.js";
 import { ignorePlaceholder, normalizeBaseUrl, normalizeOrigin, normalizeTo, sameLoginHost } from "./origin.js";
 
@@ -102,7 +102,7 @@ async function markDone({ baseUrl, requestId, claimToken }) {
   }
 }
 
-/** Poll until the relay hands over a new envelope, is fulfilled, or expires. GET takes the envelope, so each shows up once. */
+/** Poll until the relay shows a new envelope, is fulfilled, or expires. GET does not consume; `lastCiphertext` tells a new step from a re-read. */
 export async function waitForEnvelope({ baseUrl, requestId, claimToken, expiresAt, signal, lastCiphertext = "" }) {
   while (Date.now() < expiresAt) {
     if (signal?.aborted) return { status: "error", code: "aborted" };
@@ -390,18 +390,19 @@ export async function login(page, options = {}) {
   });
 }
 
-/** Run `step` on a tab in Chrome with remote debugging (default port 9222), not another agent's browser. */
-async function onCdpPage(options, step) {
+/** Run `step` on a tab in the Chrome at `options.cdpUrl`. `signal` aborts it: the socket closes, every page call fails, the job ends. */
+async function onCdpPage(options, step, signal) {
   let page;
   try {
     page = await attachCdpPage(options.cdpUrl, options.url);
+    signal?.addEventListener("abort", () => page.close(), { once: true });
     if (options.url) await page.goto(options.url);
   } catch (err) {
     page?.close();
     return { ok: false, status: "error", message: err instanceof Error ? err.message : "No browser." };
   }
   try {
-    return await step(page, options);
+    return await step(page, { ...options, signal });
   } finally {
     page.close();
   }
@@ -411,14 +412,26 @@ async function onCdpPage(options, step) {
  * Long work runs once, in the background, keyed so a repeat call reattaches instead of opening a
  * second phone-grant request. Each call returns within `timing.toolCall`: the final result, or
  * `status: "waiting"` telling the agent to call again with the same arguments.
+ * A repeat call with a different `tag` (another browser) aborts the running job and starts over: the
+ * first attempt was aimed at the wrong Chrome, and the relay lets the right one read the same grant.
  * ponytail: in-memory map; jobs die with this process, and the agent then gets "expired" from the relay on retry.
  */
 const jobs = new Map();
 
-export async function pollJob(key, start, waiting) {
+export async function pollJob(key, start, waiting, tag = "") {
   let job = jobs.get(key);
+  if (job && job.tag !== tag) {
+    job.controller.abort();
+    jobs.delete(key);
+    job = null;
+  }
   if (!job) {
-    job = { promise: start().then((result) => (job.result = result), (err) => (job.result = { ok: false, status: "error", message: String(err?.message ?? err) })) };
+    const controller = new AbortController();
+    job = { tag, controller };
+    job.promise = start(controller.signal).then(
+      (result) => (job.result = result),
+      (err) => (job.result = { ok: false, status: "error", message: String(err?.message ?? err) }),
+    );
     jobs.set(key, job);
   }
   await Promise.race([job.promise, sleep(timing.toolCall)]);
@@ -427,16 +440,25 @@ export async function pollJob(key, start, waiting) {
   return job.result;
 }
 
-const RETRY_FILL = "Not done yet: waiting on the account holder's phone (approval, or the one-time code if the site asked for one). Call fill again with the same url, requestId, and claimToken. Do not call login again; that would send a second push.";
-const RETRY_LOGIN = "Not done yet: waiting on the account holder's phone (approval, or the one-time code if the site asked for one). Call login again with the same url (and to). Only one request is open per site.";
+const RETRY_FILL = "Not done yet: waiting on the account holder's phone (approval, or the one-time code if the site asked for one). Call fill again with the same url, requestId, and claimToken. Do not call login again; that would send a second push. Check cdpUrl is the browser you work in; if not, call fill again with the right cdpUrl.";
+const RETRY_LOGIN = "Not done yet: waiting on the account holder's phone (approval, or the one-time code if the site asked for one). Call login again with the same url (and to). Only one request is open per site. Check cdpUrl is the browser you work in.";
 
 export async function fillCdp(options = {}) {
   const claim = claimOf(options);
   if (!claim) return MISSING_CLAIM;
-  return pollJob(`fill:${claim.requestId}`, () => onCdpPage(options, fill), { message: RETRY_FILL, expiresAt: options.expiresAt });
+  const cdpUrl = ignorePlaceholder(options.cdpUrl) || defaultCdpUrl();
+  const result = await pollJob(
+    `fill:${claim.requestId}`,
+    (signal) => onCdpPage({ ...options, cdpUrl }, fill, signal),
+    { message: RETRY_FILL, expiresAt: options.expiresAt },
+    cdpUrl,
+  );
+  return { ...result, cdpUrl };
 }
 
-export function loginCdp(options = {}) {
-  const site = normalizeOrigin(options.url ?? "") || options.cdpUrl || "cdp";
-  return pollJob(`login:${site}`, () => onCdpPage(options, login), { message: RETRY_LOGIN });
+export async function loginCdp(options = {}) {
+  const cdpUrl = ignorePlaceholder(options.cdpUrl) || defaultCdpUrl();
+  const site = normalizeOrigin(options.url ?? "") || cdpUrl;
+  const result = await pollJob(`login:${site}`, (signal) => onCdpPage({ ...options, cdpUrl }, login, signal), { message: RETRY_LOGIN }, cdpUrl);
+  return { ...result, cdpUrl };
 }

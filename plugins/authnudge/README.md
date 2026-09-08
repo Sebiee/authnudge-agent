@@ -10,7 +10,7 @@ The Chrome the agent already works in, over DevTools (default `http://127.0.0.1:
 chrome --remote-debugging-port=9222
 ```
 
-Computer-use and Playwright are fine; only the credential-entry step goes through Authnudge. One browser, one profile: a second "Authnudge Chrome" logs in a window the agent never uses. After `{ "ok": true }`, the session is in that profile. If the site asks for a one-time code, `fill` requests it on the same grant and fills it; the code never appears in the tool result.
+Computer-use and Playwright are fine; only the credential-entry step goes through Authnudge. One browser, one profile: a second "Authnudge Chrome" logs in a window the agent never uses. On a shared machine, pass the agent's own port as `cdpUrl`; results echo it, and a repeat `fill` with a different `cdpUrl` restarts there without losing the grant. `fill` opens the login URL in a new tab unless one is already on that site. After `{ "ok": true }`, the session is in that profile. If the site asks for a one-time code, `fill` requests it on the same grant and fills it; the code never appears in the tool result.
 
 ## Included
 

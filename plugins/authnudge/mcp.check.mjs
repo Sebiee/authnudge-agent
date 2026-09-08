@@ -44,12 +44,17 @@ assert.match(rule, /Never call the remote `login` twice/);
 // Grok bot read "not a computer-use window" as "use a separate hidden Chrome" and logged in a browser it never used.
 for (const text of [skill, rule]) {
   assert.match(text, /computer-use, Playwright/i, "browsing yourself is allowed; only the credential step is Authnudge's");
-  assert.match(text, /--remote-debugging-port=9222/);
+  assert.match(text, /--remote-debugging-port=/);
   assert.match(text, /Do \*\*not\*\* start a second|Do not start a separate/);
   assert.doesNotMatch(text, /stay logged out|not a Playwright or computer-use window/);
 }
 assert.doesNotMatch(skill.split("\n")[2], /computer-use, screen control/, "skill must not trigger on plain computer-use");
 assert.match(skill, /`fulfilled`: this request was already used/);
+// Shared box: the bot filled another agent's Chrome on the default port, then reattached to that zombie job.
+assert.match(skill, /Find your Chrome's DevTools address before the first `login`/);
+assert.match(skill, /Every result echoes `cdpUrl`/);
+assert.match(skill, /nothing to "refresh"/);
+assert.match(rule, /Find your own Chrome's DevTools port first/);
 assert.match(plugin.variables.properties.AUTHNUDGE_TO.description, /fallback/i);
 assert.match(plugin.variables.properties.AUTHNUDGE_API_KEY.description, /fallback/i);
 

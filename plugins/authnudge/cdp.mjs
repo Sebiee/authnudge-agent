@@ -72,6 +72,23 @@ export function pickTab(tabs, wantUrl) {
   return pool[0];
 }
 
+/** True when `tab` is already on the host of `wantUrl`. */
+export function onHost(tab, wantUrl) {
+  const want = parseHttpUrl(wantUrl);
+  return Boolean(want && tabScore(tab, want) > 0);
+}
+
+/** Open `url` in a new tab; null if this Chrome refuses (then the caller falls back to an existing tab). */
+async function newTab(cdpUrl, url) {
+  try {
+    const res = await fetch(new URL(`/json/new?${url}`, cdpUrl), { method: "PUT" });
+    const tab = res.ok ? await res.json() : null;
+    return tab?.webSocketDebuggerUrl ? tab : null;
+  } catch {
+    return null;
+  }
+}
+
 function openWs(url) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
@@ -102,7 +119,16 @@ export async function attachCdpPage(cdpUrl, wantUrl) {
       `No Chrome at ${cdpUrl}. Start Chrome with --remote-debugging-port=9222. Other browser automation (Playwright, computer-use) does not expose this port.`,
     );
   }
-  const tab = pickTab(tabs, wantUrl);
+  let tab = pickTab(tabs, wantUrl);
+  // Leave the agent's own tab alone: no tab on the login host means a new tab, not a redirect of whatever is in front.
+  let fresh = false;
+  if (wantUrl && !(tab && onHost(tab, wantUrl))) {
+    const created = await newTab(cdpUrl, wantUrl);
+    if (created) {
+      tab = created;
+      fresh = true;
+    }
+  }
   if (!tab?.webSocketDebuggerUrl) throw new Error("Chrome has no open tab.");
 
   const ws = await openWs(tab.webSocketDebuggerUrl);
@@ -264,12 +290,15 @@ export async function attachCdpPage(cdpUrl, wantUrl) {
       /* older chrome */
     }
   }
+  // A new tab still shows its initial empty document; wait for the first commit so goto() sees the real URL and does not load twice.
+  if (fresh) await waitForAny(["Page.frameNavigated", "Page.loadEventFired"], 15_000);
 
   return {
     async url() {
       try {
         const { frameTree } = await call("Page.getFrameTree");
-        if (frameTree?.frame?.url) return frameTree.frame.url;
+        // A fresh tab's initial empty document reports ":" until the first commit; that is not a URL.
+        if (/^[a-z][\w+.-]*:./i.test(frameTree?.frame?.url ?? "")) return frameTree.frame.url;
       } catch {
         /* fall through */
       }

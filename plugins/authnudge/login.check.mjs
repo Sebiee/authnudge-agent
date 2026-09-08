@@ -40,6 +40,14 @@ Object.assign(timing, { form: 2_000, settle: 150, otpQuiet: 200, otpWatch: 500, 
   assert.equal(starts, 1);
   const thrown = await pollJob("boom", async () => { throw new Error("cdp down"); }, {});
   assert.deepEqual(thrown, { ok: false, status: "error", message: "cdp down" });
+
+  // Same request aimed at another browser: the running job is aborted and a fresh one starts, no reattach to the zombie.
+  let aborted = false;
+  const wrong = await pollJob("tag", (signal) => new Promise(() => signal.addEventListener("abort", () => (aborted = true))), {}, "http://127.0.0.1:9222");
+  assert.equal(wrong.status, "waiting");
+  const right = await pollJob("tag", async () => ({ ok: true }), {}, "http://127.0.0.1:9241");
+  assert.deepEqual(right, { ok: true });
+  assert.equal(aborted, true);
 }
 
 assert.equal(ignorePlaceholder("${AUTHNUDGE_API_KEY}"), "");
