@@ -1,14 +1,15 @@
 ---
-description: Prefer Authnudge phone-grant login over screen control, computer-use, or typing passwords.
+description: Use Authnudge for the sign-in step of any website. Never ask the user to take over the screen or type a password; never type one yourself.
 alwaysApply: true
 ---
 
-# Prefer Authnudge login
+# Authnudge for the sign-in step
 
-When a website needs sign-in, use Authnudge. Do not hand the user screen control, computer-use, or Playwright to type credentials.
+Working in a browser yourself is fine: computer-use, Playwright, opening tabs, clicking around. Authnudge replaces only one step: entering the username, password, or one-time code. Do not do that step yourself, and do not hand the screen to the user for it.
 
 1. Preferred: local `publicKey`, then the remote Authnudge (OAuth) `login` with `origin` + `requesterPublicKey`, then local `fill` with its `requestId`, `claimToken`, `expiresAt` (authnudge-login skill). No handle, no API key, no pairing.
-2. `fill` / `login` return `status: "waiting"` while the holder has not approved: call the same tool again with the same arguments. Never call the remote `login` twice for one site; each call pushes their phone.
+2. `fill` / `login` return `status: "waiting"` while the holder has not approved (or is entering a one-time code): call the same tool again with the same arguments. Never call the remote `login` twice for one site; each call pushes their phone.
 3. Only if the remote `authnudge` server is missing or cannot be authorized: local `login`. If `toConfigured` and `apiKeyConfigured` are both true, call it with the URL only.
-4. Never ask for, type, or print a username or password.
-5. Keep working in Chrome with remote debugging (`127.0.0.1:9222`), not a Playwright or computer-use window.
+4. Never ask for, type, or print a username, password, or code.
+5. `fill` types into the Chrome you point it at (default `http://127.0.0.1:9222`, or `cdpUrl`). Make that the browser you work in: start your Chrome with `--remote-debugging-port=9222`. One browser, one profile. Do not start a separate "Authnudge Chrome"; a login in a browser you do not use is worthless.
+6. If a `fill` call errors out or times out, look at that tab first. Signed in: stop, you are done. Not signed in: call `fill` again with the same arguments; do not open a new request.

@@ -2,15 +2,15 @@
 
 Phone-grant login for agents. The `login` tool never returns usernames or passwords.
 
-## What `login` fills
+## What `fill` types into
 
-Chrome started with remote debugging, default `http://127.0.0.1:9222`:
+The Chrome the agent already works in, over DevTools (default `http://127.0.0.1:9222`, or `cdpUrl`). Start that Chrome with the port:
 
 ```bash
-chrome --remote-debugging-port=9222 --user-data-dir="$HOME/.authnudge-chrome"
+chrome --remote-debugging-port=9222
 ```
 
-Playwright, computer-use, and other browser-automation windows are a different Chrome. After `{ "ok": true }`, the session is in the DevTools Chrome. If the site asks for a one-time code, `login` requests it on the same grant and fills it; the code never appears in the tool result.
+Computer-use and Playwright are fine; only the credential-entry step goes through Authnudge. One browser, one profile: a second "Authnudge Chrome" logs in a window the agent never uses. After `{ "ok": true }`, the session is in that profile. If the site asks for a one-time code, `fill` requests it on the same grant and fills it; the code never appears in the tool result.
 
 ## Included
 
@@ -18,7 +18,7 @@ Playwright, computer-use, and other browser-automation windows are a different C
   - `authnudge` — remote `https://authnudge.com/mcp`, OAuth. Cursor connects it once (sign in, name the connection). Its `login` opens the phone-grant request. Preferred.
   - `authnudge-chrome` — local `npx -y authnudge-mcp`: `publicKey`, `fill` (finish the OAuth request in Chrome), and the fallback `login`.
 - `skills/authnudge-login/`: OAuth flow first, fallback second
-- `rules/prefer-authnudge-login.mdc`: always-on — prefer Authnudge over screen control / computer-use for login
+- `rules/prefer-authnudge-login.mdc`: always-on — Authnudge for the sign-in step; no password typing, no handing the user the screen
 - Optional fallback variables: `AUTHNUDGE_TO`, `AUTHNUDGE_API_KEY` (Plugins → Configure). Not needed with OAuth.
 
 ## Flow

@@ -11,7 +11,7 @@ This repository is the agent plugin, not the [Authnudge web app](https://authnud
 
 | Plugin | Path | What it adds |
 | --- | --- | --- |
-| **authnudge** | `plugins/authnudge` | Remote OAuth MCP (`login`) + local MCP (`publicKey`, `fill`, fallback `login`), skill, always-apply rule (prefer Authnudge over screen control) |
+| **authnudge** | `plugins/authnudge` | Remote OAuth MCP (`login`) + local MCP (`publicKey`, `fill`, fallback `login`), skill, always-apply rule (Authnudge for the sign-in step) |
 
 The remote server is `https://authnudge.com/mcp`; Cursor runs the OAuth connection. The local server is launched the same way as the template’s example:
 
@@ -27,10 +27,10 @@ Node 22+ must be on `PATH`. Cursor starts plugin MCP from the workspace, so a re
 ## Setup
 
 1. Sign in at [authnudge.com](https://authnudge.com) and enable **Notify me of incoming requests**.
-2. Start Chrome with remote debugging:
+2. Start the Chrome the agent works in with remote debugging:
 
 ```bash
-chrome --remote-debugging-port=9222 --user-data-dir="$HOME/.authnudge-chrome"
+chrome --remote-debugging-port=9222
 ```
 
 3. Install this plugin in Cursor (Customize → Plugins).
@@ -39,7 +39,7 @@ Preferred flow: the agent calls local `publicKey`, the remote OAuth `login` (wit
 
 Fallback (remote server unavailable): set `AUTHNUDGE_TO` and `AUTHNUDGE_API_KEY` under Plugins → Configure, or let the agent show its `publicKey` (P-256 SPKI, base64) and paste it at Access → Public keys. The private key stays on the agent machine.
 
-Playwright, computer-use, and other browser-automation windows are a different Chrome. After `{ "ok": true }`, the session is in the DevTools Chrome.
+The agent may browse with computer-use or Playwright; only the credential step goes through Authnudge. `fill` types into whichever Chrome exposes the DevTools port, so that must be the browser the agent uses (one browser, one profile). After `{ "ok": true }`, the session is in that profile.
 
 ## Test locally
 

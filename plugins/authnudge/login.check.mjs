@@ -4,8 +4,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decryptEnvelope, encryptForRequester, generateRequesterKeys } from "./e2e.js";
 import { loginFormOp } from "./fill.js";
-import { fill, login, pollJob, publicKeyInfo, timing } from "./login.mjs";
+import { fill, login, pollJob, publicKeyInfo, timing, waitForEnvelope } from "./login.mjs";
 import { ignorePlaceholder, normalizeTo } from "./origin.js";
+
+// The relay's code window (90 s) can close before the request's own deadline: a 404 there is final, not "still waiting".
+{
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({ error: "Unknown request" }, { status: 404 });
+  const started = Date.now();
+  const gone = await waitForEnvelope({ baseUrl: "http://relay.test", requestId: "r", claimToken: "c", expiresAt: Date.now() + 60_000 });
+  globalThis.fetch = realFetch;
+  assert.deepEqual(gone, { status: "expired" });
+  assert.ok(Date.now() - started < 1_000, "must not poll a dropped request until the original deadline");
+}
 
 // Fake pages react instantly; the budgets only need to be long enough for a few loop turns.
 Object.assign(timing, { form: 2_000, settle: 150, otpQuiet: 200, otpWatch: 500, retypeAfter: 300, toolCall: 100 });
@@ -188,6 +199,11 @@ const opts = { to: "you@example.com", baseUrl: "http://127.0.0.1:9" };
   assert.equal(seen.done, 1); // phone flips to "Done" right away instead of at the hold alarm
   assert.deepEqual(page.log.typed, ["identifier:7", "password:6", "otp:6"]);
   assert.equal(JSON.stringify(result).includes("s3cret"), false);
+
+  // Same grant again after a host-side timeout: say "already used, check the tab", not a bare error.
+  const again = await fill(fakePage({ steps: ["identifier", "password", "done"] }), { ...grant, baseUrl: opts.baseUrl });
+  assert.equal(again.status, "fulfilled");
+  assert.match(again.message, /signed in/);
 }
 globalThis.fetch = async () => {
   throw new Error("fill must not call Authnudge without a claim");

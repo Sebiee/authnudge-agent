@@ -115,6 +115,9 @@ export async function waitForEnvelope({ baseUrl, requestId, claimToken, expiresA
         }
         if (data.status === "fulfilled") return { status: "fulfilled" };
         if (data.status === "expired") return { status: "expired" };
+      } else if (res.status === 404 || res.status === 410) {
+        // The relay dropped it (e.g. the 90 s code window closed). Its own deadline can be earlier than the request's.
+        return { status: "expired" };
       }
     } catch {
       /* still waiting */
@@ -285,6 +288,7 @@ async function afterPassword(page, origin, keys, relay, lastCiphertext) {
 /** The relay has an open request: wait for the grant, decrypt with `keys`, fill `page`, handle a code step. */
 async function fillFromRelay(page, origin, keys, relay) {
   const waited = await waitForEnvelope(relay);
+  if (waited.status === "fulfilled") return FULFILLED;
   if (!waited.envelope) return { ok: false, status: waited.status === "expired" ? "expired" : "error" };
 
   const first = await useDelivery(page, origin, keys, relay.requestId, waited.envelope, waited.envelopeKind);
@@ -321,6 +325,7 @@ export async function fill(page, options = {}) {
 }
 
 const MISSING_CLAIM = { ok: false, status: "error", message: "Pass requestId and claimToken from the Authnudge `login` tool result." };
+const FULFILLED = { ok: false, status: "fulfilled", message: "This request was already used. Check whether that Chrome tab is signed in before opening a new request." };
 
 function claimOf(options) {
   const requestId = String(options.requestId ?? "").trim();
@@ -422,8 +427,8 @@ export async function pollJob(key, start, waiting) {
   return job.result;
 }
 
-const RETRY_FILL = "Not done yet: the account holder has not approved on their phone. Call fill again with the same url, requestId, and claimToken. Do not call login again; that would send a second push.";
-const RETRY_LOGIN = "Not done yet: the account holder has not approved on their phone. Call login again with the same url (and to). Only one request is open per site.";
+const RETRY_FILL = "Not done yet: waiting on the account holder's phone (approval, or the one-time code if the site asked for one). Call fill again with the same url, requestId, and claimToken. Do not call login again; that would send a second push.";
+const RETRY_LOGIN = "Not done yet: waiting on the account holder's phone (approval, or the one-time code if the site asked for one). Call login again with the same url (and to). Only one request is open per site.";
 
 export async function fillCdp(options = {}) {
   const claim = claimOf(options);

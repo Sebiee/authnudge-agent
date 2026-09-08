@@ -22,7 +22,7 @@ const URL_ARG = {
 };
 const CDP_ARG = {
   type: "string",
-  description: "Chrome DevTools HTTP URL. Defaults to AUTHNUDGE_CDP_URL or http://127.0.0.1:9222.",
+  description: "Chrome DevTools HTTP URL of the browser you work in. Defaults to AUTHNUDGE_CDP_URL or http://127.0.0.1:9222.",
 };
 
 const TOOLS = [
@@ -35,7 +35,7 @@ const TOOLS = [
   {
     name: "fill",
     description:
-      "Preferred. After the Authnudge (OAuth) server's `login` tool opened a request with this agent's publicKey, wait for the phone grant and fill the login form in Chrome with remote debugging (default http://127.0.0.1:9222). Pass requestId, claimToken, and expiresAt from that result, plus the same login url. Returns within ~25s: `{ ok: true }`, a final status, or `status: \"waiting\"` — then call fill again with the same arguments (the request stays open until expiresAt). Never call the remote `login` again for the same site while a request is open; that sends the user another push. Stays if the site asks for a one-time code. Does not fill Playwright, computer-use, or other browser-automation tabs. Never returns usernames, passwords, codes, or the requester private key.",
+      "Preferred. After the Authnudge (OAuth) server's `login` tool opened a request with this agent's publicKey, wait for the phone grant and fill the login form in Chrome with remote debugging (default http://127.0.0.1:9222). Pass requestId, claimToken, and expiresAt from that result, plus the same login url. Returns within ~25s: `{ ok: true }`, a final status, or `status: \"waiting\"` — then call fill again with the same arguments (the request stays open until expiresAt). Never call the remote `login` again for the same site while a request is open; that sends the user another push. Stays if the site asks for a one-time code. Fills whichever Chrome cdpUrl points at: give it the browser you work in (start it with --remote-debugging-port=9222), not a separate one. `status: \"fulfilled\"` means the request was already used; check the tab, it is probably signed in. Never returns usernames, passwords, codes, or the requester private key.",
     inputSchema: {
       type: "object",
       properties: {

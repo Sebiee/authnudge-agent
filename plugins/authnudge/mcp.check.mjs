@@ -41,6 +41,15 @@ assert.match(rule, /`login` with `origin` \+ `requesterPublicKey`, then local `f
 assert.match(skill, /call `fill` again with the exact same arguments/);
 assert.match(skill, /One `login` call = one push/);
 assert.match(rule, /Never call the remote `login` twice/);
+// Grok bot read "not a computer-use window" as "use a separate hidden Chrome" and logged in a browser it never used.
+for (const text of [skill, rule]) {
+  assert.match(text, /computer-use, Playwright/i, "browsing yourself is allowed; only the credential step is Authnudge's");
+  assert.match(text, /--remote-debugging-port=9222/);
+  assert.match(text, /Do \*\*not\*\* start a second|Do not start a separate/);
+  assert.doesNotMatch(text, /stay logged out|not a Playwright or computer-use window/);
+}
+assert.doesNotMatch(skill.split("\n")[2], /computer-use, screen control/, "skill must not trigger on plain computer-use");
+assert.match(skill, /`fulfilled`: this request was already used/);
 assert.match(plugin.variables.properties.AUTHNUDGE_TO.description, /fallback/i);
 assert.match(plugin.variables.properties.AUTHNUDGE_API_KEY.description, /fallback/i);
 
@@ -97,6 +106,8 @@ async function handshake(command, args, cwd) {
     const fillTool = listed.result.tools.find((t) => t.name === "fill");
     assert.match(fillTool.description, /^Preferred\./);
     assert.match(fillTool.description, /Never returns usernames/);
+    assert.match(fillTool.description, /browser you work in/);
+    assert.doesNotMatch(fillTool.description, /Does not fill Playwright/);
     assert.deepEqual(fillTool.inputSchema.required, ["url", "requestId", "claimToken"]);
     const loginTool = listed.result.tools.find((t) => t.name === "login");
     assert.match(loginTool.description, /^Fallback/);
